@@ -1,8 +1,6 @@
 #ifndef __PANEL_SCHEMAS_H__
 #define __PANEL_SCHEMAS_H__
 
-#define PANEL_RESOURCE_PATH "/org/gnome/panel/"
-
 #define PANEL_GENERAL_SCHEMA                    "org.gnome.gnome-panel.general"
 #define PANEL_GENERAL_CONFIRM_PANEL_REMOVAL_KEY "confirm-panel-removal"
 #define PANEL_GENERAL_ENABLE_TOOLTIPS_KEY       "enable-tooltips"
@@ -18,12 +16,6 @@
 #define PANEL_DESKTOP_DISABLE_LOCK_SCREEN_KEY  "disable-lock-screen"
 #define PANEL_DESKTOP_DISABLE_LOG_OUT_KEY      "disable-log-out"
 #define PANEL_DESKTOP_DISABLE_SWITCH_USER_KEY  "disable-user-switching"
-
-#define PANEL_RUN_SCHEMA                 "org.gnome.gnome-panel.run-dialog"
-#define PANEL_RUN_HISTORY_KEY            "history"
-#define PANEL_RUN_ENABLE_COMPLETION_KEY  "enable-autocompletion"
-#define PANEL_RUN_ENABLE_LIST_KEY        "enable-program-list"
-#define PANEL_RUN_SHOW_LIST_KEY          "show-program-list"
 
 #define PANEL_LAYOUT_SCHEMA               "org.gnome.gnome-panel.layout"
 #define PANEL_LAYOUT_TOPLEVEL_ID_LIST_KEY "toplevel-id-list"
@@ -50,6 +42,8 @@
 
 #define PANEL_OBJECT_SCHEMA             "org.gnome.gnome-panel.object"
 #define PANEL_OBJECT_IID_KEY            "object-iid"
+#define PANEL_OBJECT_MODULE_ID_KEY      "module-id"
+#define PANEL_OBJECT_APPLET_ID_KEY      "applet-id"
 #define PANEL_OBJECT_TOPLEVEL_ID_KEY    "toplevel-id"
 #define PANEL_OBJECT_PACK_TYPE_KEY      "pack-type"
 #define PANEL_OBJECT_PACK_INDEX_KEY     "pack-index"
@@ -64,7 +58,6 @@
 #define GNOME_DESKTOP_WM_KEYBINDINGS_TOGGLE_MAXIMIZED_KEY      "toggle-maximized"
 #define GNOME_DESKTOP_WM_KEYBINDINGS_MAXIMIZE_KEY              "maximize"
 #define GNOME_DESKTOP_WM_KEYBINDINGS_UNMAXIMIZE_KEY            "unmaximize"
-#define GNOME_DESKTOP_WM_KEYBINDINGS_TOGGLE_SHADED_KEY         "toggle-shaded"
 #define GNOME_DESKTOP_WM_KEYBINDINGS_BEGIN_MOVE_KEY            "begin-move"
 #define GNOME_DESKTOP_WM_KEYBINDINGS_BEGIN_RESIZE_KEY          "begin-resize"
 

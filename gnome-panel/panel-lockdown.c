@@ -21,11 +21,10 @@
  *      Vincent Untz <vuntz@gnome.org>
  */
 
-#include <libpanel-util/panel-cleanup.h>
+#include "config.h"
+#include "panel-lockdown.h"
 
 #include "panel-schemas.h"
-
-#include "panel-lockdown.h"
 
 struct _PanelLockdownPrivate {
         GSettings *desktop_settings;
@@ -344,19 +343,36 @@ panel_lockdown_class_init (PanelLockdownClass *lockdown_class)
                         G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 }
 
+PanelLockdown *
+panel_lockdown_new (void)
+{
+        return g_object_new (PANEL_TYPE_LOCKDOWN, NULL);
+}
+
 gboolean
 panel_lockdown_is_applet_disabled (PanelLockdown *lockdown,
-                                   const char    *iid)
+                                   const char    *module_id,
+                                   const char    *applet_id)
 {
+        char *iid;
+        gboolean disabled;
         int i;
 
         g_return_val_if_fail (PANEL_IS_LOCKDOWN (lockdown), TRUE);
 
-        for (i = 0; lockdown->priv->disabled_applets[i] != NULL; i++)
-                if (g_strcmp0 (lockdown->priv->disabled_applets[i], iid) == 0)
-                        return TRUE;
+        iid = g_strdup_printf ("%s::%s", module_id, applet_id);
+        disabled = FALSE;
 
-        return FALSE;
+        for (i = 0; lockdown->priv->disabled_applets[i] != NULL; i++) {
+                if (g_strcmp0 (lockdown->priv->disabled_applets[i], iid) == 0) {
+                        disabled = TRUE;
+                        break;
+                }
+        }
+
+        g_free (iid);
+
+        return disabled;
 }
 
 gboolean
@@ -450,41 +466,18 @@ panel_lockdown_on_notify (PanelLockdown       *lockdown,
         g_free (signal_name);
 }
 
-PanelLockdown *
-panel_lockdown_get (void)
-{
-        static PanelLockdown *shared_lockdown = NULL;
-
-        if (shared_lockdown == NULL) {
-                shared_lockdown = g_object_new (PANEL_TYPE_LOCKDOWN, NULL);
-                panel_cleanup_register (panel_cleanup_unref_and_nullify,
-                                        &shared_lockdown);
-        }
-
-        return shared_lockdown;
-}
-
-gboolean
-panel_lockdown_get_disable_command_line_s (void)
-{
-        return panel_lockdown_get_disable_command_line (panel_lockdown_get ());
-}
-
-gboolean
-panel_lockdown_get_panels_locked_down_s (void)
-{
-        return panel_lockdown_get_panels_locked_down (panel_lockdown_get ());
-}
-
 GpLockdownFlags
 panel_lockdown_get_flags (PanelLockdown *lockdown,
-                          const char    *iid)
+                          const char    *module_id,
+                          const char    *applet_id)
 {
+        char *iid;
         GpLockdownFlags flags;
         int i;
 
         g_return_val_if_fail (PANEL_IS_LOCKDOWN (lockdown), GP_LOCKDOWN_FLAGS_NONE);
 
+        iid = g_strdup_printf ("%s::%s", module_id, applet_id);
         flags = GP_LOCKDOWN_FLAGS_NONE;
 
         for (i = 0; lockdown->priv->disabled_applets[i] != NULL; i++) {
@@ -493,6 +486,8 @@ panel_lockdown_get_flags (PanelLockdown *lockdown,
                         break;
                 }
         }
+
+        g_free (iid);
 
         if (lockdown->priv->disable_force_quit)
                 flags |= GP_LOCKDOWN_FLAGS_FORCE_QUIT;
@@ -513,10 +508,4 @@ panel_lockdown_get_flags (PanelLockdown *lockdown,
                 flags |= GP_LOCKDOWN_FLAGS_USER_SWITCHING;
 
         return flags;
-}
-
-GpLockdownFlags
-panel_lockdown_get_flags_s (const char *iid)
-{
-        return panel_lockdown_get_flags (panel_lockdown_get (), iid);
 }

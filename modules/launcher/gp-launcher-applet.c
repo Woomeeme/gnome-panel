@@ -32,6 +32,7 @@
 
 #include <glib/gi18n-lib.h>
 #include <gmenu-tree.h>
+#include <libgnome-desktop/gnome-systemd.h>
 #include <systemd/sd-journal.h>
 
 #include "gp-launcher-button.h"
@@ -368,12 +369,12 @@ selection_changed_cb (GtkTreeSelection *selection,
 
           variant = g_variant_new_string (app_data->path);
 
-          gp_initital_setup_dialog_set_setting (data->dialog, "location", variant);
+          gp_initial_setup_dialog_set_setting (data->dialog, "location", variant);
           done = TRUE;
         }
     }
 
-  gp_initital_setup_dialog_set_done (data->dialog, done);
+  gp_initial_setup_dialog_set_done (data->dialog, done);
 }
 
 static gboolean
@@ -793,7 +794,22 @@ pid_cb (GDesktopAppInfo *info,
         GPid             pid,
         gpointer         user_data)
 {
+  const gchar *app_name;
+
   g_child_watch_add (pid, close_pid, NULL);
+
+  app_name = g_app_info_get_id (G_APP_INFO (info));
+  if (app_name == NULL)
+    app_name = g_app_info_get_executable (G_APP_INFO (info));
+
+  /* Start async request; we don't care about the result */
+  gnome_start_systemd_scope (app_name,
+                             pid,
+                             NULL,
+                             NULL,
+                             NULL,
+                             NULL,
+                             NULL);
 }
 
 static void
@@ -984,37 +1000,38 @@ update_tooltip (GpLauncherApplet *self,
                           G_BINDING_DEFAULT | G_BINDING_SYNC_CREATE);
 }
 
-static void
-update_launcher (GpLauncherApplet *self)
+static gboolean
+update_launcher (GpLauncherApplet  *self,
+                 GError           **error)
 {
   GpLauncherAppletPrivate *priv;
-  GError *error;
-  char *error_message;
+  GError *local_error;
   char *icon;
   char *name;
   char *comment;
   AtkObject *atk;
 
+  g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
   priv = gp_launcher_applet_get_instance_private (self);
 
-  error = NULL;
-  error_message = NULL;
+  local_error = NULL;
 
   if (!g_key_file_load_from_file (priv->key_file,
                                   priv->location,
                                   G_KEY_FILE_NONE,
-                                  &error))
+                                  &local_error))
     {
-      error_message = g_strdup_printf (_("Failed to load key file “%s”: %s"),
-                                       priv->location,
-                                       error->message);
+      g_set_error (error,
+                   G_IO_ERROR,
+                   G_IO_ERROR_FAILED,
+                   _("Failed to load key file “%s”: %s"),
+                   priv->location,
+                   local_error->message);
 
-      g_error_free (error);
+      g_error_free (local_error);
 
-      launcher_error (self, error_message);
-      g_free (error_message);
-
-      return;
+      return FALSE;
     }
 
   icon = NULL;
@@ -1027,12 +1044,9 @@ update_launcher (GpLauncherApplet *self)
                                        &name,
                                        NULL,
                                        &comment,
-                                       &error_message))
+                                       error))
     {
-      launcher_error (self, error_message);
-      g_free (error_message);
-
-      return;
+      return FALSE;
     }
 
   update_icon (self, icon);
@@ -1045,6 +1059,8 @@ update_launcher (GpLauncherApplet *self)
   g_free (icon);
   g_free (name);
   g_free (comment);
+
+  return TRUE;
 }
 
 static void
@@ -1083,12 +1099,22 @@ file_changed_cb (GFileMonitor     *monitor,
                  GFileMonitorEvent event_type,
                  GpLauncherApplet *self)
 {
-  update_launcher (self);
+  GError *error;
+
+  error = NULL;
+
+  if (!update_launcher (self, &error))
+    {
+      launcher_error (self, error->message);
+      g_error_free (error);
+    }
+
   lockdown_changed (self);
 }
 
-static void
-location_changed (GpLauncherApplet *self)
+static gboolean
+location_changed (GpLauncherApplet  *self,
+                  GError           **error)
 {
   GpLauncherAppletPrivate *priv;
   GFile *file;
@@ -1127,7 +1153,7 @@ location_changed (GpLauncherApplet *self)
                     G_CALLBACK (file_changed_cb),
                     self);
 
-  update_launcher (self);
+  return update_launcher (self, error);
 }
 
 static void
@@ -1135,7 +1161,15 @@ location_changed_cb (GSettings        *settings,
                      const char       *key,
                      GpLauncherApplet *self)
 {
-  location_changed (self);
+  GError *error;
+
+  error = NULL;
+
+  if (!location_changed (self, &error))
+    {
+      launcher_error (self, error->message);
+      g_error_free (error);
+    }
 }
 
 static void
@@ -1243,8 +1277,9 @@ setup_button (GpLauncherApplet *self)
   gtk_image_set_pixel_size (GTK_IMAGE (priv->image), icon_size);
 }
 
-static void
-gp_launcher_applet_setup (GpLauncherApplet *self)
+static gboolean
+gp_launcher_applet_setup (GpLauncherApplet  *self,
+                          GError           **error)
 {
   GpLauncherAppletPrivate *priv;
 
@@ -1272,14 +1307,7 @@ gp_launcher_applet_setup (GpLauncherApplet *self)
 
   setup_drop_destination (self);
 
-  location_changed (self);
-}
-
-static void
-gp_launcher_applet_constructed (GObject *object)
-{
-  G_OBJECT_CLASS (gp_launcher_applet_parent_class)->constructed (object);
-  gp_launcher_applet_setup (GP_LAUNCHER_APPLET (object));
+  return location_changed (self, error);
 }
 
 static void
@@ -1315,14 +1343,19 @@ gp_launcher_applet_finalize (GObject *object)
   G_OBJECT_CLASS (gp_launcher_applet_parent_class)->finalize (object);
 }
 
-static void
-gp_launcher_applet_initial_setup (GpApplet *applet,
-                                  GVariant *initial_settings)
+static gboolean
+gp_launcher_applet_initial_setup (GpApplet  *applet,
+                                  GVariant  *initial_settings,
+                                  GError   **error)
 {
   GSettings *settings;
+  gboolean ret;
   const char *location;
 
+  g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
   settings = gp_applet_settings_new (applet, LAUNCHER_SCHEMA);
+  ret = TRUE;
 
   location = NULL;
   if (g_variant_lookup (initial_settings, "location", "&s", &location))
@@ -1338,7 +1371,6 @@ gp_launcher_applet_initial_setup (GpApplet *applet,
       const char *comment;
       GKeyFile *file;
       char *filename;
-      GError *error;
 
       type = NULL;
       icon = NULL;
@@ -1412,11 +1444,9 @@ gp_launcher_applet_initial_setup (GpApplet *applet,
 
       filename = gp_launcher_get_unique_filename ();
 
-      error = NULL;
-      if (!g_key_file_save_to_file (file, filename, &error))
+      if (!g_key_file_save_to_file (file, filename, error))
         {
-          g_warning ("%s", error->message);
-          g_error_free (error);
+          ret = FALSE;
         }
       else
         {
@@ -1432,6 +1462,15 @@ gp_launcher_applet_initial_setup (GpApplet *applet,
     }
 
   g_object_unref (settings);
+
+  return ret;
+}
+
+static gboolean
+gp_launcher_applet_initable_init (GpApplet  *applet,
+                                  GError   **error)
+{
+  return gp_launcher_applet_setup (GP_LAUNCHER_APPLET (applet), error);
 }
 
 static void
@@ -1494,11 +1533,11 @@ gp_launcher_applet_class_init (GpLauncherAppletClass *self_class)
   object_class = G_OBJECT_CLASS (self_class);
   applet_class = GP_APPLET_CLASS (self_class);
 
-  object_class->constructed = gp_launcher_applet_constructed;
   object_class->dispose = gp_launcher_applet_dispose;
   object_class->finalize = gp_launcher_applet_finalize;
 
   applet_class->initial_setup = gp_launcher_applet_initial_setup;
+  applet_class->initable_init = gp_launcher_applet_initable_init;
   applet_class->remove_from_panel = gp_launcher_applet_remove_from_panel;
 
   self_class->get_menu_resource = gp_launcher_applet_get_menu_resource;
@@ -1570,6 +1609,8 @@ gp_launcher_applet_initial_setup_dialog (GpInitialSetupDialog *dialog)
   gtk_tree_view_set_model (GTK_TREE_VIEW (tree_view),
                            GTK_TREE_MODEL (data->store));
 
-  gp_initital_setup_dialog_add_content_widget (dialog, scrolled, data,
-                                               launcher_data_free);
+  gp_initial_setup_dialog_add_content_widget (dialog,
+                                              scrolled,
+                                              data,
+                                              launcher_data_free);
 }

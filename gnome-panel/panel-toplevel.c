@@ -78,6 +78,8 @@ typedef enum {
 } PanelGrabOpType;
 
 struct _PanelToplevelPrivate {
+	GpApplication          *application;
+
 	char                   *toplevel_id;
 
 	char                   *settings_path;
@@ -169,7 +171,6 @@ enum {
 	TOGGLE_EXPAND_SIGNAL,
 	EXPAND_SIGNAL,
 	UNEXPAND_SIGNAL,
-	TOGGLE_HIDDEN_SIGNAL,
 	BEGIN_MOVE_SIGNAL,
 	BEGIN_RESIZE_SIGNAL,
 	LAST_SIGNAL
@@ -177,6 +178,7 @@ enum {
 
 enum {
 	PROP_0,
+	PROP_APPLICATION,
 	PROP_TOPLEVEL_ID,
 	PROP_SETTINGS_PATH,
 	PROP_NAME,
@@ -195,7 +197,6 @@ enum {
 };
 
 static guint         toplevel_signals [LAST_SIGNAL] = { 0 };
-static GSList       *toplevel_list = NULL;
 
 G_DEFINE_TYPE_WITH_PRIVATE (PanelToplevel, panel_toplevel, GTK_TYPE_WINDOW)
 
@@ -257,50 +258,15 @@ update_style_classes (PanelToplevel *toplevel)
 	}
 }
 
-GSList *
-panel_toplevel_list_toplevels (void)
-{
-	return toplevel_list;
-}
-
-PanelToplevel *
-panel_toplevel_get_by_id (const char *toplevel_id)
-{
-	GSList *l;
-
-	if (PANEL_GLIB_STR_EMPTY (toplevel_id))
-		return NULL;
-
-	for (l = toplevel_list; l; l = l->next) {
-		PanelToplevel *toplevel = l->data;
-
-		if (!g_strcmp0 (toplevel->priv->toplevel_id, toplevel_id))
-			return toplevel;
-	}
-
-	return NULL;
-}
-
 gboolean
-panel_toplevel_is_last (PanelToplevel *toplevel)
-{
-	GSList *l;
-
-	for (l = toplevel_list; l; l = l->next) {
-		if (l->data != toplevel)
-			return FALSE;
-	}
-
-	return TRUE;
-}
-
-gboolean
-panel_toplevel_find_empty_spot (GdkScreen        *screen,
-				PanelOrientation *orientation,
-				int              *monitor)
+panel_toplevel_find_empty_spot (GpApplication    *application,
+                                GdkScreen        *screen,
+                                PanelOrientation *orientation,
+                                int              *monitor)
 {
 	int      *filled_spots;
-	GSList   *li;
+	GList    *toplevels;
+	GList    *li;
 	int       i;
 	gboolean  found_a_spot = FALSE;
 	GdkDisplay *display;
@@ -313,8 +279,9 @@ panel_toplevel_find_empty_spot (GdkScreen        *screen,
 	n_monitors = gdk_display_get_n_monitors (display);
 
 	filled_spots = g_new0 (int, n_monitors);
+	toplevels = gp_application_get_toplevels (application);
 
-	for (li = panel_toplevel_list_toplevels (); li != NULL; li = li->next) {
+	for (li = toplevels; li != NULL; li = li->next) {
 		PanelToplevel *toplevel = li->data;
 		GdkScreen *toplevel_screen = gtk_window_get_screen (GTK_WINDOW (toplevel));
 		int toplevel_monitor = panel_toplevel_get_monitor (toplevel);
@@ -325,6 +292,8 @@ panel_toplevel_find_empty_spot (GdkScreen        *screen,
 
 		filled_spots[toplevel_monitor] |= panel_toplevel_get_orientation (toplevel);
 	}
+
+	g_list_free (toplevels);
 
 	for (i = 0; i < n_monitors; i++) {
 		/* These are ordered based on "priority" of the
@@ -614,6 +583,8 @@ panel_toplevel_begin_grab_op (PanelToplevel   *toplevel,
 			      gboolean         grab_keyboard,
 			      guint32          time_)
 {
+	GpApplication *application;
+	PanelLockdown *lockdown;
 	GtkWidget     *widget;
 	GdkWindow     *window;
 	GdkCursorType  cursor_type;
@@ -626,7 +597,10 @@ panel_toplevel_begin_grab_op (PanelToplevel   *toplevel,
 	    toplevel->priv->grab_op != PANEL_GRAB_OP_NONE)
 		return;
 
-	if (panel_lockdown_get_panels_locked_down_s ())
+	application = panel_toplevel_get_application (toplevel);
+	lockdown = gp_application_get_lockdown (application);
+
+	if (panel_lockdown_get_panels_locked_down (lockdown))
 		return;
 
 	/* If any of the position/orientation are not writable,
@@ -1951,22 +1925,6 @@ panel_toplevel_unexpand (PanelToplevel *toplevel)
 }
 
 static gboolean
-panel_toplevel_toggle_hidden (PanelToplevel *toplevel)
-{
-	GtkDirectionType dir;
-
-	dir = toplevel->priv->orientation & PANEL_VERTICAL_MASK ?
-	      GTK_DIR_UP : GTK_DIR_LEFT;
-
-	if (toplevel->priv->state == PANEL_STATE_NORMAL)
-		panel_toplevel_hide (toplevel, toplevel->priv->auto_hide, dir);
-	else
-		panel_toplevel_unhide (toplevel);
-
-	return FALSE;
-}
-
-static gboolean
 panel_toplevel_begin_move (PanelToplevel *toplevel)
 {
 	if (toplevel->priv->grab_op != PANEL_GRAB_OP_NONE)
@@ -2786,6 +2744,10 @@ panel_toplevel_set_property (GObject      *object,
 	toplevel = PANEL_TOPLEVEL (object);
 
 	switch (prop_id) {
+	case PROP_APPLICATION:
+		g_assert (toplevel->priv->application == NULL);
+		toplevel->priv->application = g_value_get_object (value);
+		break;
 	case PROP_TOPLEVEL_ID:
 		panel_toplevel_set_toplevel_id (toplevel, g_value_get_string (value));
 		break;
@@ -2850,6 +2812,9 @@ panel_toplevel_get_property (GObject    *object,
 	toplevel = PANEL_TOPLEVEL (object);
 
 	switch (prop_id) {
+	case PROP_APPLICATION:
+		g_value_set_object (value, toplevel->priv->application);
+		break;
 	case PROP_TOPLEVEL_ID:
 		g_value_set_string (value, toplevel->priv->toplevel_id);
 		break;
@@ -2907,8 +2872,6 @@ panel_toplevel_finalize (GObject *object)
 	PanelToplevel *toplevel = (PanelToplevel *) object;
 
 	panel_struts_unregister_strut (toplevel);
-
-	toplevel_list = g_slist_remove (toplevel_list, toplevel);
 
 	panel_toplevel_disconnect_gtk_settings (toplevel);
 	toplevel->priv->gtk_settings = NULL;
@@ -2972,9 +2935,18 @@ panel_toplevel_class_init (PanelToplevelClass *klass)
 	klass->toggle_expand    = panel_toplevel_toggle_expand;
 	klass->expand           = panel_toplevel_expand;
 	klass->unexpand         = panel_toplevel_unexpand;
-	klass->toggle_hidden    = panel_toplevel_toggle_hidden;
 	klass->begin_move       = panel_toplevel_begin_move;
 	klass->begin_resize     = panel_toplevel_begin_resize;
+
+	g_object_class_install_property (
+		gobject_class,
+		PROP_APPLICATION,
+		g_param_spec_object (
+			"app",
+			"GpApplication",
+			"GpApplication",
+			GP_TYPE_APPLICATION,
+			G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY));
 
 	g_object_class_install_property (
 		gobject_class,
@@ -3183,17 +3155,6 @@ panel_toplevel_class_init (PanelToplevelClass *klass)
 			      G_TYPE_BOOLEAN,
 			      0);
 
-	toplevel_signals [TOGGLE_HIDDEN_SIGNAL] =
-		g_signal_new ("toggle-hidden",
-			      G_TYPE_FROM_CLASS (gobject_class),
-			      G_SIGNAL_RUN_LAST | G_SIGNAL_ACTION,
-			      G_STRUCT_OFFSET (PanelToplevelClass, toggle_hidden),
-			      NULL,
-			      NULL,
-			      NULL,
-			      G_TYPE_BOOLEAN,
-			      0);
-
 	toplevel_signals [BEGIN_MOVE_SIGNAL] =
 		g_signal_new ("begin-move",
 			      G_TYPE_FROM_CLASS (gobject_class),
@@ -3373,8 +3334,6 @@ panel_toplevel_init (PanelToplevel *toplevel)
 	panel_toplevel_update_description (toplevel);
 	panel_toplevel_update_gtk_settings (toplevel);
 
-	toplevel_list = g_slist_prepend (toplevel_list, toplevel);
-
 	/* Prevent the window from being deleted via Alt+F4 by accident.  This
 	 * happens with "alternative" window managers such as Sawfish or XFWM4.
 	 */
@@ -3384,6 +3343,12 @@ panel_toplevel_init (PanelToplevel *toplevel)
 	                  NULL);
 
 	update_style_classes (toplevel);
+}
+
+GpApplication *
+panel_toplevel_get_application (PanelToplevel *self)
+{
+	return self->priv->application;
 }
 
 PanelWidget *
@@ -3397,7 +3362,13 @@ panel_toplevel_get_panel_widget (PanelToplevel *toplevel)
 static gboolean
 panel_toplevel_position_is_writable (PanelToplevel *toplevel)
 {
-	if (panel_lockdown_get_panels_locked_down_s () ||
+	GpApplication *application;
+	PanelLockdown *lockdown;
+
+	application = panel_toplevel_get_application (toplevel);
+	lockdown = gp_application_get_lockdown (application);
+
+	if (panel_lockdown_get_panels_locked_down (lockdown) ||
 	    !(g_settings_is_writable (toplevel->priv->settings,
 				      PANEL_TOPLEVEL_MONITOR_KEY) &&
 	      g_settings_is_writable (toplevel->priv->settings,

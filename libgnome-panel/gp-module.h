@@ -19,7 +19,9 @@
 #define GP_MODULE_H
 
 #include <gtk/gtk.h>
+#include <libgnome-panel/gp-action.h>
 #include <libgnome-panel/gp-applet-info.h>
+#include <libgnome-panel/gp-macros.h>
 
 G_BEGIN_DECLS
 
@@ -28,7 +30,7 @@ G_BEGIN_DECLS
  *
  * The version of the module system's ABI.
  */
-#define GP_MODULE_ABI_VERSION 0x0001
+#define GP_MODULE_ABI_VERSION 0x0002
 
 /**
  * GpGetAppletInfoFunc:
@@ -51,52 +53,52 @@ typedef GpAppletInfo * (* GpGetAppletInfoFunc)    (const gchar *id);
  */
 typedef const gchar  * (* GetAppletIdFromIidFunc) (const gchar *iid);
 
-/**
- * GetStandaloneMenuFunc:
- * @enable_tooltips: Whether the applet should show tooltips
- * @locked_down: Whether the applet is on locked down panel
- * @menu_icon_size: The size of icons in menus
- *
- * Specifies the type of the module function called to create a
- * standalone menu.
- *
- * Returns: (transfer full): returns a #GtkMenu.
- */
-typedef GtkWidget    * (* GetStandaloneMenuFunc)  (gboolean     enable_tooltips,
-                                                   gboolean     locked_down,
-                                                   guint        menu_icon_size);
+typedef struct _GpModule GpModule;
+typedef gboolean (* GpActionFunc) (GpModule      *self,
+                                   GpActionFlags  action,
+                                   uint32_t       time);
 
 /**
  * GP_TYPE_MODULE:
  *
  * The type for GpModule.
  */
+GP_EXPORT
 #define GP_TYPE_MODULE (gp_module_get_type ())
 G_DECLARE_FINAL_TYPE (GpModule, gp_module, GP, MODULE, GObject)
 
+GP_EXPORT
 void          gp_module_set_abi_version     (GpModule               *module,
                                              guint32                 abi_version);
 
+GP_EXPORT
 void          gp_module_set_gettext_domain  (GpModule               *module,
                                              const gchar            *gettext_domain);
 
+GP_EXPORT
 void          gp_module_set_id              (GpModule               *module,
                                              const gchar            *id);
 
+GP_EXPORT
 void          gp_module_set_version         (GpModule               *module,
                                              const gchar            *version);
 
+GP_EXPORT
 void          gp_module_set_applet_ids      (GpModule               *module,
                                              ...);
 
+GP_EXPORT
 void          gp_module_set_get_applet_info (GpModule               *module,
                                              GpGetAppletInfoFunc     func);
 
+GP_EXPORT
 void          gp_module_set_compatibility   (GpModule               *module,
                                              GetAppletIdFromIidFunc  func);
 
-void          gp_module_set_standalone_menu (GpModule               *module,
-                                             GetStandaloneMenuFunc   func);
+GP_EXPORT
+void          gp_module_set_actions         (GpModule               *self,
+                                             GpActionFlags           actions,
+                                             GpActionFunc            func);
 
 /**
  * gp_module_load:
@@ -108,6 +110,7 @@ void          gp_module_set_standalone_menu (GpModule               *module,
  * used to setup all required module info. As minimum gp_module_set_id() and
  * gp_module_set_abi_version() should be called.
  */
+GP_EXPORT
 void          gp_module_load                (GpModule               *module);
 
 G_END_DECLS

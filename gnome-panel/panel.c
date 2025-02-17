@@ -25,7 +25,7 @@
 #include "panel.h"
 
 #include "applet.h"
-#include "panel-applets-manager.h"
+#include "gp-applet-manager.h"
 #include "panel-bindings.h"
 #include "panel-context-menu.h"
 #include "panel-util.h"
@@ -165,6 +165,9 @@ panel_menu_get (PanelWidget *panel, PanelData *pd)
 	if (!pd->menu) {
 		pd->menu = panel_context_menu_create (panel);
 		if (pd->menu != NULL) {
+			GpApplication *application;
+			PanelLockdown *lockdown;
+
 			g_object_ref_sink (pd->menu);
 			g_signal_connect (pd->menu, "deactivate",
 					  G_CALLBACK (context_menu_deactivate),
@@ -172,7 +175,10 @@ panel_menu_get (PanelWidget *panel, PanelData *pd)
 			g_signal_connect (pd->menu, "show",
 					  G_CALLBACK (context_menu_show), pd);
 
-			panel_lockdown_on_notify (panel_lockdown_get (),
+			application = panel_toplevel_get_application (panel->toplevel);
+			lockdown = gp_application_get_lockdown (application);
+
+			panel_lockdown_on_notify (lockdown,
 						  NULL,
 						  G_OBJECT (pd->menu),
 						  panel_menu_lockdown_changed,
@@ -359,14 +365,16 @@ typedef struct
 
   PanelObjectPackType  pack_type;
   int                  pack_index;
-  char                *iid;
+  char                *module_id;
+  char                *applet_id;
 } InitialSetupData;
 
 static InitialSetupData *
 initial_setup_data_new (PanelWidget         *panel,
                         PanelObjectPackType  pack_type,
                         int                  pack_index,
-                        const gchar         *iid)
+                        const gchar         *module_id,
+                        const gchar         *applet_id)
 {
   InitialSetupData *data;
 
@@ -376,7 +384,8 @@ initial_setup_data_new (PanelWidget         *panel,
 
   data->pack_type = pack_type;
   data->pack_index = pack_index;
-  data->iid = g_strdup (iid);
+  data->module_id = g_strdup (module_id);
+  data->applet_id = g_strdup (applet_id);
 
   return data;
 }
@@ -388,7 +397,8 @@ initial_setup_data_free (gpointer user_data)
 
   data = (InitialSetupData *) user_data;
 
-  g_free (data->iid);
+  g_free (data->module_id);
+  g_free (data->applet_id);
   g_free (data);
 }
 
@@ -398,6 +408,7 @@ initial_setup_dialog_cb (GpInitialSetupDialog *dialog,
                          gpointer              user_data)
 {
   InitialSetupData *data;
+  GpApplication *application;
   GVariant *initial_settings;
 
   data = (InitialSetupData *) user_data;
@@ -405,13 +416,16 @@ initial_setup_dialog_cb (GpInitialSetupDialog *dialog,
   if (canceled)
     return;
 
-  initial_settings = gp_initital_setup_dialog_get_settings (dialog);
+  application = panel_toplevel_get_application (data->panel->toplevel);
+  initial_settings = gp_initial_setup_dialog_get_settings (dialog);
 
-  panel_applet_frame_create (data->panel->toplevel,
-                             data->pack_type,
-                             data->pack_index,
-                             data->iid,
-                             initial_settings);
+  panel_layout_object_create (gp_application_get_layout (application),
+                              data->module_id,
+                              data->applet_id,
+                              panel_toplevel_get_id (data->panel->toplevel),
+                              data->pack_type,
+                              data->pack_index,
+                              initial_settings);
 
   g_variant_unref (initial_settings);
 }
@@ -421,19 +435,33 @@ ask_about_custom_launcher (const char          *file,
                            PanelWidget         *panel,
                            PanelObjectPackType  pack_type)
 {
+  GpApplication *application;
+  PanelLockdown *lockdown;
+  GpAppletManager *applet_manager;
   int pack_index;
-  const char *iid;
+  const char *module_id;
+  const char *applet_id;
   InitialSetupData *initial_setup_data;
   GVariantBuilder builder;
   GVariant *variant;
   GVariant *settings;
 
-	if (panel_lockdown_get_disable_command_line_s ())
-		return;
+  application = panel_toplevel_get_application (panel->toplevel);
+  lockdown = gp_application_get_lockdown (application);
 
-  iid = "org.gnome.gnome-panel.launcher::custom-launcher";
+  if (panel_lockdown_get_disable_command_line (lockdown))
+    return;
+
+  applet_manager = gp_application_get_applet_manager (application);
+
+  module_id = "org.gnome.gnome-panel.launcher";
+  applet_id = "custom-launcher";
   pack_index = panel_widget_get_new_pack_index (panel, pack_type);
-  initial_setup_data = initial_setup_data_new (panel, pack_type, pack_index, iid);
+  initial_setup_data = initial_setup_data_new (panel,
+                                               pack_type,
+                                               pack_index,
+                                               module_id,
+                                               applet_id);
 
   g_variant_builder_init (&builder, G_VARIANT_TYPE ("a{sv}"));
 
@@ -449,12 +477,14 @@ ask_about_custom_launcher (const char          *file,
   settings = g_variant_builder_end (&builder);
   g_variant_ref_sink (settings);
 
-  panel_applets_manager_open_initial_setup_dialog (iid,
-                                                   settings,
-                                                   NULL,
-                                                   initial_setup_dialog_cb,
-                                                   initial_setup_data,
-                                                   initial_setup_data_free);
+  gp_applet_manager_open_initial_setup_dialog (applet_manager,
+                                               module_id,
+                                               applet_id,
+                                               settings,
+                                               NULL,
+                                               initial_setup_dialog_cb,
+                                               initial_setup_data,
+                                               initial_setup_data_free);
 
   g_variant_unref (settings);
 }
@@ -469,9 +499,12 @@ create_launcher_from_info (PanelToplevel       *toplevel,
                            const char          *comment,
                            const char          *icon)
 {
+  GpApplication *application;
   GVariantBuilder builder;
   GVariant *variant;
   GVariant *settings;
+
+  application = panel_toplevel_get_application (toplevel);
 
   g_variant_builder_init (&builder, G_VARIANT_TYPE ("a{sv}"));
 
@@ -501,11 +534,13 @@ create_launcher_from_info (PanelToplevel       *toplevel,
   settings = g_variant_builder_end (&builder);
   g_variant_ref_sink (settings);
 
-  panel_applet_frame_create (toplevel,
-                             pack_type,
-                             pack_index,
-                             "org.gnome.gnome-panel.launcher::launcher",
-                             settings);
+  panel_layout_object_create (gp_application_get_layout (application),
+                              "org.gnome.gnome-panel.launcher",
+                              "launcher",
+                              panel_toplevel_get_id (toplevel),
+                              pack_type,
+                              pack_index,
+                              settings);
 
   g_variant_unref (settings);
 }
@@ -521,6 +556,7 @@ create_launcher_from_uri (PanelToplevel       *toplevel,
   GVariantBuilder builder;
   GVariant *variant;
   GVariant *settings;
+  GpApplication *application;
 
   g_return_if_fail (location != NULL);
 
@@ -549,13 +585,27 @@ create_launcher_from_uri (PanelToplevel       *toplevel,
   settings = g_variant_builder_end (&builder);
   g_variant_ref_sink (settings);
 
-  panel_applet_frame_create (toplevel,
-                             pack_type,
-                             pack_index,
-                             "org.gnome.gnome-panel.launcher::launcher",
-                             settings);
+  application = panel_toplevel_get_application (toplevel);
+
+  panel_layout_object_create (gp_application_get_layout (application),
+                              "org.gnome.gnome-panel.launcher",
+                              "launcher",
+                              panel_toplevel_get_id (toplevel),
+                              pack_type,
+                              pack_index,
+                              settings);
 
   g_variant_unref (settings);
+}
+
+static PanelLayout *
+get_layout (PanelToplevel *toplevel)
+{
+  GpApplication *application;
+
+  application = panel_toplevel_get_application (toplevel);
+
+  return gp_application_get_layout (application);
 }
 
 static gboolean
@@ -574,7 +624,7 @@ drop_url (PanelWidget         *panel,
 
 	g_return_val_if_fail (url != NULL, FALSE);
 
-	if (!panel_layout_is_writable ())
+	if (!panel_layout_is_writable (get_layout (panel->toplevel)))
 		return FALSE;
 
 	netscape_url = g_strsplit (url, "\n", 2);
@@ -620,7 +670,7 @@ drop_uri (PanelWidget         *panel,
 	char  *icon;
 	GFile *file;
 
-	if (!panel_layout_is_writable ())
+	if (!panel_layout_is_writable (get_layout (panel->toplevel)))
 		return FALSE;
 
 	name = panel_util_get_label_for_uri (uri);
@@ -674,10 +724,26 @@ drop_nautilus_desktop_uri (PanelWidget         *panel,
 	success = TRUE;
 	basename = uri + strlen ("x-nautilus-desktop:///");
 
-	if (strncmp (basename, "trash", strlen ("trash")) == 0)
-		panel_applet_frame_create (panel->toplevel, pack_type, pack_index,
-		                           "OAFIID:GNOME_Panel_TrashApplet", NULL);
-	else if (strncmp (basename, "home", strlen ("home")) == 0) {
+	if (strncmp (basename, "trash", strlen ("trash")) == 0) {
+		GpApplication *application;
+		GpAppletManager *applet_manager;
+
+		application = panel_toplevel_get_application (panel->toplevel);
+		applet_manager = gp_application_get_applet_manager (application);
+
+		if (gp_applet_manager_get_applet_info (applet_manager,
+		                                       "org.gnome.gnome-applets",
+		                                       "trash",
+		                                       NULL) != NULL) {
+			panel_layout_object_create (gp_application_get_layout (application),
+			                            "org.gnome.gnome-applets",
+			                            "trash",
+			                            panel_toplevel_get_id (panel->toplevel),
+			                            pack_type,
+			                            pack_index,
+			                            NULL);
+		}
+	} else if (strncmp (basename, "home", strlen ("home")) == 0) {
 		char  *name;
 		char  *uri_tmp;
 		GFile *file;
@@ -810,10 +876,12 @@ drop_urilist (PanelWidget         *panel,
 					  NULL, NULL);
 
 		if (info) {
+			PanelLayout *layout;
 			const char *mime;
 			GFileType   type;
 			gboolean    can_exec;
 
+			layout = get_layout (panel->toplevel);
 			mime = g_file_info_get_content_type (info);
 			type = g_file_info_get_file_type (info);
 			can_exec = g_file_info_get_attribute_boolean (info,
@@ -827,7 +895,7 @@ drop_urilist (PanelWidget         *panel,
 				   (!strcmp (mime, "application/x-gnome-app-info") ||
 				    !strcmp (mime, "application/x-desktop") ||
 				    !strcmp (mime, "application/x-kde-app-info"))) {
-				if (panel_layout_is_writable ())
+				if (panel_layout_is_writable (layout))
 					create_launcher_from_uri (panel->toplevel,
 					                          pack_type,
 					                          pack_index,
@@ -839,7 +907,7 @@ drop_urilist (PanelWidget         *panel,
 
 				filename = g_file_get_path (file);
 
-				if (panel_layout_is_writable ())
+				if (panel_layout_is_writable (layout))
 					/* executable and local, so add a launcher with it */
 					ask_about_custom_launcher (filename, panel, pack_type);
 				else
@@ -961,10 +1029,16 @@ panel_check_drop_forbidden (PanelWidget    *panel,
 			    guint           info,
 			    guint           time_)
 {
+	GpApplication *application;
+	PanelLockdown *lockdown;
+
 	if (!panel)
 		return FALSE;
 
-	if (panel_lockdown_get_panels_locked_down_s ())
+	application = panel_toplevel_get_application (panel->toplevel);
+	lockdown = gp_application_get_lockdown (application);
+
+	if (panel_lockdown_get_panels_locked_down (lockdown))
 		return FALSE;
 
 	if (gdk_drag_context_get_actions (context) & GDK_ACTION_COPY)
@@ -1047,10 +1121,17 @@ panel_receive_dnd_data (PanelWidget         *panel,
 			GdkDragContext      *context,
 			guint                time_)
 {
+	GpApplication *application;
+	PanelLockdown *lockdown;
+	PanelLayout *layout;
 	const guchar *data;
 	gboolean      success = FALSE;
 
-	if (panel_lockdown_get_panels_locked_down_s ()) {
+	application = panel_toplevel_get_application (panel->toplevel);
+	lockdown = gp_application_get_lockdown (application);
+	layout = gp_application_get_layout (application);
+
+	if (panel_lockdown_get_panels_locked_down (lockdown)) {
 		gtk_drag_finish (context, FALSE, FALSE, time_);
 		return;
 	}
@@ -1082,22 +1163,41 @@ panel_receive_dnd_data (PanelWidget         *panel,
 			gtk_drag_finish (context, FALSE, FALSE, time_);
 			return;
 		}
-		if (panel_layout_is_writable ()) {
+		if (panel_layout_is_writable (layout)) {
+			const char *iid;
+			const char *applet_id;
+			char *module_id;
+			GpAppletManager *applet_manager;
 			InitialSetupData *initial_setup_data;
 
-			initial_setup_data = initial_setup_data_new (panel,
-			                                             pack_type, pack_index,
-			                                             (char *) data);
+			iid = (char *) data;
+			applet_id = g_strrstr (iid, "::");
+			module_id = g_strndup (iid, strlen (iid) - strlen (applet_id));
+			applet_id += 2;
 
-			if (!panel_applets_manager_open_initial_setup_dialog ((char *) data,
-			                                                      NULL,
-			                                                      NULL,
-			                                                      initial_setup_dialog_cb,
-			                                                      initial_setup_data,
-			                                                      initial_setup_data_free)) {
-				panel_applet_frame_create (panel->toplevel,
-				                           pack_type, pack_index,
-				                           (char *) data, NULL);
+			applet_manager = gp_application_get_applet_manager (application);
+
+			initial_setup_data = initial_setup_data_new (panel,
+			                                             pack_type,
+			                                             pack_index,
+			                                             module_id,
+			                                             applet_id);
+
+			if (!gp_applet_manager_open_initial_setup_dialog (applet_manager,
+			                                                  module_id,
+			                                                  applet_id,
+			                                                  NULL,
+			                                                  NULL,
+			                                                  initial_setup_dialog_cb,
+			                                                  initial_setup_data,
+			                                                  initial_setup_data_free)) {
+				panel_layout_object_create (layout,
+				                            module_id,
+				                            applet_id,
+				                            panel_toplevel_get_id (panel->toplevel),
+				                            pack_type,
+				                            pack_index,
+				                            NULL);
 			}
 
 			success = TRUE;
@@ -1201,7 +1301,8 @@ panel_setup (PanelToplevel *toplevel)
 static void
 panel_delete_without_query (PanelToplevel *toplevel)
 {
-	panel_layout_delete_toplevel (panel_toplevel_get_id (toplevel));
+  panel_layout_delete_toplevel (get_layout (toplevel),
+                                panel_toplevel_get_id (toplevel));
 } 
 
 static void

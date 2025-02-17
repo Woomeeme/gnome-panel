@@ -25,6 +25,7 @@
 #include "gp-logout-applet.h"
 #include "gp-run-applet.h"
 #include "gp-shutdown-applet.h"
+#include "panel-run-dialog.h"
 
 static GpAppletInfo *
 action_button_get_applet_info (const char *id)
@@ -114,6 +115,22 @@ action_button_get_applet_id_from_iid (const char *iid)
   return NULL;
 }
 
+static gboolean
+run_dialog_func (GpModule      *module,
+                 GpActionFlags  action,
+                 uint32_t       time)
+{
+  GdkDisplay *display;
+  GdkScreen *screen;
+
+  display = gdk_display_get_default ();
+  screen = gdk_display_get_default_screen (display);
+
+  panel_run_dialog_present (screen, time);
+
+  return TRUE;
+}
+
 void
 gp_module_load (GpModule *module)
 {
@@ -136,4 +153,8 @@ gp_module_load (GpModule *module)
 
   gp_module_set_get_applet_info (module, action_button_get_applet_info);
   gp_module_set_compatibility (module, action_button_get_applet_id_from_iid);
+
+  gp_module_set_actions (module,
+                         GP_ACTION_RUN_DIALOG,
+                         run_dialog_func);
 }

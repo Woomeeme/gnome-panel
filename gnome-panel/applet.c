@@ -30,12 +30,6 @@ static GSList *registered_applets = NULL;
 static GSList *queued_position_saves = NULL;
 static guint   queued_position_source = 0;
 
-static inline PanelWidget *
-panel_applet_get_panel_widget (AppletInfo *info)
-{
-	return PANEL_WIDGET (gtk_widget_get_parent (info->widget));
-}
-
 /* permanently remove an applet - all non-permanent
  * cleanups should go in panel_applet_destroy()
  */
@@ -166,6 +160,29 @@ panel_applet_list_applets (void)
 	return registered_applets;
 }
 
+void
+panel_applet_foreach (PanelWidget            *panel,
+                      PanelAppletForeachFunc  func,
+                      gpointer                user_data)
+{
+  GSList *applets;
+  GSList *l;
+
+  applets = panel_applet_list_applets ();
+
+  for (l = applets; l != NULL; l = l->next)
+    {
+      AppletInfo *info;
+
+      info = l->data;
+
+      if (panel != NULL && panel != panel_applet_get_panel_widget (info))
+        continue;
+
+      func (info, user_data);
+    }
+}
+
 gboolean
 panel_applet_activate_main_menu (guint32 activate_time)
 {
@@ -185,7 +202,9 @@ panel_applet_activate_main_menu (guint32 activate_time)
       if (!g_type_is_a (G_TYPE_FROM_INSTANCE (applet), GP_TYPE_ACTION))
         continue;
 
-      if (gp_action_main_menu (GP_ACTION (applet), activate_time))
+      if (gp_action_handle_action (GP_ACTION (applet),
+                                   GP_ACTION_MAIN_MENU,
+                                   activate_time))
         return TRUE;
     }
 
@@ -239,12 +258,32 @@ panel_applet_register (GtkWidget       *applet,
 	return info;
 }
 
+PanelWidget *
+panel_applet_get_panel_widget (AppletInfo *info)
+{
+  return PANEL_WIDGET (gtk_widget_get_parent (info->widget));
+}
+
+GpApplet *
+panel_applet_get_applet (AppletInfo *info)
+{
+  return GP_APPLET (gtk_bin_get_child (GTK_BIN (info->widget)));
+}
+
 gboolean
 panel_applet_can_freely_move (AppletInfo *applet)
 {
+	PanelWidget *panel;
+	GpApplication *application;
+	PanelLockdown *lockdown;
+
+	panel = panel_applet_get_panel_widget (applet);
+	application = panel_toplevel_get_application (panel->toplevel);
+	lockdown = gp_application_get_lockdown (application);
+
 	/* if we check for more lockdown than this, then we'll need to update
 	 * callers that use panel_lockdown_on_notify() */
-	if (panel_lockdown_get_panels_locked_down_s ())
+	if (panel_lockdown_get_panels_locked_down (lockdown))
 		return FALSE;
 
 	return (g_settings_is_writable (applet->settings,

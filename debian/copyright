@@ -17,18 +17,17 @@ Copyright: 1997-2004 Free Software Foundation, Inc.
            2003      Frank Worsley <fworsley@shaw.ca>
            2003-2004 Rob Adams
            2007      Christian Persch
-           2007      David Zeuthen <david@fubar.dk>
            2008-2011 Novell, Inc.
            2008      Dennis Cranston
            2010      Carlos Garcia Campos <carlosgc@gnome.org>
-           2011      Codethink Limited
-           2015-2021 Alberts Muktupāvels
+           2021      Sebastian Geiger
+           2015-2023 Alberts Muktupāvels
 License: GPL-2+
 
 Files: libgnome-panel/*
 Copyright: 2001 Sun Microsystems, Inc.
            2010 Carlos Garcia Campos
-           2016-2021 Alberts Muktupāvels
+           2016-2022 Alberts Muktupāvels
 License: LGPL-2.1+
 
 Files: help/*
@@ -48,6 +47,7 @@ Copyright: 2000-2006 GNOME Documentation Team
            2008-2010 Jorge González
            2008-2016 Mario Blättermann
            2008      Florian Ackermann
+           2008      Yuri Myasoedov
            2009-2012 Marek Černocký
            2009      Claude Paroz
            2009      Lucas Lommer
@@ -58,9 +58,11 @@ Copyright: 2000-2006 GNOME Documentation Team
            2012-2015 Daniel Mustieles
            2012      Andika Triwidada
            2012      Breno Felipe M. de Santana
+           2012      Yuri Kozlov
            2013      Enrico Nicoletto
            2014      Úr Balázs
            2015      Anders Jonsson
+           2022      Ser82-png
 License: GFDL-NIV-1.1+
 
 License: GPL-2+

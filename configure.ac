@@ -3,7 +3,7 @@ dnl Define version info
 dnl **************************************************************************
 
 m4_define([gp_major_version], [3])
-m4_define([gp_minor_version], [46])
+m4_define([gp_minor_version], [54])
 m4_define([gp_micro_version], [0])
 m4_define([gp_version], [gp_major_version.gp_minor_version.gp_micro_version])
 
@@ -12,7 +12,7 @@ dnl Define bugzilla address
 dnl **************************************************************************
 
 m4_define([gp_issue_url],
-          [https://gitlab.gnome.org/GNOME/gnome-panel/-/issues/new])
+          [https://gitlab.gnome.org/GNOME/gnome-panel/-/issues/])
 
 dnl **************************************************************************
 dnl Initialize autoconf
@@ -52,7 +52,7 @@ dnl **************************************************************************
 dnl Initialize automake
 dnl **************************************************************************
 
-AM_INIT_AUTOMAKE([1.13 no-dist-gzip dist-xz tar-ustar -Wno-portability])
+AM_INIT_AUTOMAKE([1.16.4 no-dist-gzip dist-xz tar-ustar -Wno-portability])
 AM_MAINTAINER_MODE([enable])
 AM_SILENT_RULES([yes])
 
@@ -107,9 +107,9 @@ dnl    increment lt_age.
 dnl 4. If any interfaces have been removed or changed since the last public
 dnl    release, then set lt_age to 0.
 
-m4_define([lt_current], [2])
+m4_define([lt_current], [3])
 m4_define([lt_revision], [0])
-m4_define([lt_age], [2])
+m4_define([lt_age], [0])
 m4_define([lt_version_info], [lt_current:lt_revision:lt_age])
 
 AC_SUBST([LT_VERSION_INFO], [lt_version_info])
@@ -121,7 +121,7 @@ AC_ARG_ENABLE([documentation],
 	[], [enable_documentation=yes])
 AM_CONDITIONAL(ENABLE_DOCUMENTATION, test x$enable_documentation = xyes)
 
-LIBGNOME_DESKTOP_REQUIRED=2.91.0
+LIBGNOME_DESKTOP_REQUIRED=3.35.3
 GDK_PIXBUF_REQUIRED=2.26.0
 PANGO_REQUIRED=1.15.4
 GLIB_REQUIRED=2.67.1
@@ -135,6 +135,7 @@ CAIRO_REQUIRED=1.0.0
 GWEATHER_REQUIRED=3.91.0
 DCONF_REQUIRED=0.13.4
 XRANDR_REQUIRED=1.3.0
+GSETTINGS_DESKTOP_SCHEMAS_REQUIRED=42.0
 
 dnl pkg-config dependency checks
 
@@ -150,7 +151,7 @@ PKG_CHECK_MODULES([PANEL], [
   gio-2.0 >= $GLIB_REQUIRED
   gio-unix-2.0 >= $GLIB_REQUIRED
   gnome-desktop-3.0 >= $LIBGNOME_DESKTOP_REQUIRED
-  libgnome-menu-3.0 >= $LIBGNOME_MENU_REQUIRED
+  gsettings-desktop-schemas >= $GSETTINGS_DESKTOP_SCHEMAS_REQUIRED
   dconf >= $DCONF_REQUIRED
   x11
   xi
@@ -165,7 +166,9 @@ PKG_CHECK_MODULES([LIBGNOME_PANEL], [
 
 PKG_CHECK_MODULES([ACTION_BUTTON], [
   gio-unix-2.0 >= $GLIB_REQUIRED
+  gnome-desktop-3.0 >= $LIBGNOME_DESKTOP_REQUIRED
   gtk+-3.0 >= $GTK_REQUIRED
+  libgnome-menu-3.0 >= $LIBGNOME_MENU_REQUIRED
   libsystemd >= $LIBSYSTEMD_REQUIRED
   x11
 ])
@@ -176,6 +179,7 @@ AC_SUBST(FISH_LIBS)
 
 PKG_CHECK_MODULES([LAUNCHER], [
   gio-unix-2.0 >= $GLIB_REQUIRED
+  gnome-desktop-3.0 >= $LIBGNOME_DESKTOP_REQUIRED
   gtk+-3.0 >= $GTK_REQUIRED
   libgnome-menu-3.0 >= $LIBGNOME_MENU_REQUIRED
   libsystemd >= $LIBSYSTEMD_REQUIRED
@@ -184,6 +188,7 @@ PKG_CHECK_MODULES([LAUNCHER], [
 PKG_CHECK_MODULES([MENU], [
   gdm
   gio-unix-2.0 >= $GLIB_REQUIRED
+  gnome-desktop-3.0 >= $LIBGNOME_DESKTOP_REQUIRED
   gtk+-3.0 >= $GTK_REQUIRED
   libgnome-menu-3.0 >= $LIBGNOME_MENU_REQUIRED
   libsystemd >= $LIBSYSTEMD_REQUIRED
@@ -256,10 +261,6 @@ dnl **************************************************************************
 
 AC_STRUCT_DIRENT_D_TYPE
 
-dnl gtk-doc stuff
-
-GTK_DOC_CHECK([1.25], [--flavour no-tmpl])
-
 dnl yelp-tools stuff
 
 YELP_HELP_INIT
@@ -272,12 +273,14 @@ AC_CONFIG_FILES([
   Makefile
 
   data/Makefile
-  data/16x16/Makefile
-  data/22x22/Makefile
-  data/24x24/Makefile
-  data/32x32/Makefile
-  data/48x48/Makefile
-  data/scalable/Makefile
+
+  data/icons/Makefile
+  data/icons/16x16/Makefile
+  data/icons/22x22/Makefile
+  data/icons/24x24/Makefile
+  data/icons/32x32/Makefile
+  data/icons/48x48/Makefile
+  data/icons/scalable/Makefile
 
   data/pkgconfig/Makefile
   data/pkgconfig/libgnome-panel.pc
@@ -288,13 +291,9 @@ AC_CONFIG_FILES([
   data/theme/Yaru/Makefile
 
   gnome-panel/Makefile
-  gnome-panel/libpanel-util/Makefile
 
   libgnome-panel/Makefile
-
-  docs/Makefile
-  docs/reference/Makefile
-  docs/reference/libgnome-panel/Makefile
+  libpanel-util/Makefile
 
   help/Makefile
   help/clock/Makefile
@@ -345,5 +344,4 @@ echo ""
 echo "  Maintainer mode .................: ${USE_MAINTAINER_MODE}"
 echo ""
 echo "  Evolution-Data-Server support ...: ${enable_eds}"
-echo "  Build gtk-doc documentation .....: ${enable_gtk_doc}"
 echo ""

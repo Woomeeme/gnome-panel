@@ -3,7 +3,6 @@ aclocal.m4
 build-aux/ltmain.sh
 config.log
 configure
-docs/reference/libgnome-panel/html/
 gnome-panel/panel-resources.*
 libgnome-panel/Makefile.in
 m4/libtool.m4

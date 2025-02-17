@@ -230,7 +230,7 @@ append_clear (GpRecentMenu *menu)
   gtk_widget_set_sensitive (item, FALSE);
   gtk_widget_show (item);
 
-  icon = gtk_image_new_from_icon_name ("edit-clear", GTK_ICON_SIZE_MENU);
+  icon = gtk_image_new_from_icon_name ("edit-clear-all", GTK_ICON_SIZE_MENU);
   gtk_image_set_pixel_size (GTK_IMAGE (icon), menu->menu_icon_size);
 
   item = gp_image_menu_item_new_with_label (_("Clear Recent Documents..."));
@@ -451,7 +451,7 @@ install_properties (GObjectClass *object_class)
 
   menu_properties[PROP_MENU_ICON_SIZE] =
     g_param_spec_uint ("menu-icon-size", "Menu Icon Size", "Menu Icon Size",
-                       16, 24, 16,
+                       16, 48, 16,
                        G_PARAM_CONSTRUCT | G_PARAM_WRITABLE |
                        G_PARAM_EXPLICIT_NOTIFY |
                        G_PARAM_STATIC_STRINGS);

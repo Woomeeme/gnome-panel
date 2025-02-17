@@ -18,7 +18,10 @@
 #ifndef GP_APPLET_MANAGER_H
 #define GP_APPLET_MANAGER_H
 
-#include "panel-applets-manager.h"
+#include "gp-application.h"
+#include "libgnome-panel/gp-applet-info-private.h"
+#include "libgnome-panel/gp-applet-private.h"
+#include "libgnome-panel/gp-initial-setup-dialog-private.h"
 
 G_BEGIN_DECLS
 
@@ -26,38 +29,35 @@ G_BEGIN_DECLS
 G_DECLARE_FINAL_TYPE (GpAppletManager, gp_applet_manager,
                       GP, APPLET_MANAGER, GObject)
 
-GpAppletManager *gp_applet_manager_new                       (void);
-
-GpModuleManager *gp_applet_manager_get_module_manager        (GpAppletManager             *self);
-
-gboolean         gp_applet_manager_factory_activate          (GpAppletManager             *self,
-                                                              const char                  *iid);
-
-void             gp_applet_manager_factory_deactivate        (GpAppletManager             *self,
-                                                              const char                  *iid);
+GpAppletManager *gp_applet_manager_new                       (GpApplication               *application);
 
 GpAppletInfo    *gp_applet_manager_get_applet_info           (GpAppletManager             *self,
-                                                              const char                  *iid);
+                                                              const char                  *module_id,
+                                                              const char                  *applet_id,
+                                                              GError                     **error);
 
-gboolean         gp_applet_manager_load_applet               (GpAppletManager             *self,
-                                                              const char                  *iid,
-                                                              PanelAppletFrameActivating  *frame_act);
+GpApplet        *gp_applet_manager_load_applet               (GpAppletManager             *self,
+                                                              const char                  *module_id,
+                                                              const char                  *applet_id,
+                                                              const char                  *settings_path,
+                                                              GVariant                    *initial_settings,
+                                                              GError                     **error);
 
 char            *gp_applet_manager_get_new_iid               (GpAppletManager             *self,
                                                               const char                  *old_iid);
 
 gboolean         gp_applet_manager_open_initial_setup_dialog (GpAppletManager             *self,
-                                                              const char                  *iid,
+                                                              const char                  *module_id,
+                                                              const char                  *applet_id,
                                                               GVariant                    *settings,
                                                               GtkWindow                   *parent,
                                                               GpInitialSetupCallback       callback,
                                                               gpointer                     user_data,
                                                               GDestroyNotify               free_func);
 
-GtkWidget       *gp_applet_manager_get_standalone_menu       (GpAppletManager             *self);
-
 gboolean         gp_applet_manager_is_applet_disabled        (GpAppletManager             *self,
-                                                              const char                  *iid,
+                                                              const char                  *module_id,
+                                                              const char                  *applet_id,
                                                               char                       **reason);
 
 G_END_DECLS

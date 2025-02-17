@@ -39,6 +39,7 @@
 
 #include <glib/gi18n.h>
 #include <gio/gio.h>
+#include <polkit/polkit.h>
 
 #include "calendar-window.h"
 
@@ -62,6 +63,7 @@
 
 enum {
 	EDIT_LOCATIONS,
+	PERMISSION_READY,
 	LAST_SIGNAL
 };
 
@@ -77,6 +79,7 @@ struct _CalendarWindowPrivate {
 
 	gboolean     locked_down;
 
+	GtkWidget *locations_lock_btn;
 	GtkWidget *locations_list;
 
 #ifdef HAVE_EDS
@@ -99,6 +102,9 @@ struct _CalendarWindowPrivate {
         GtkTreeModelFilter *tasks_filter;
         GtkTreeModelFilter *weather_filter;
 #endif /* HAVE_EDS */
+
+	GCancellable *cancellable;
+	GPermission *permission;
 };
 
 G_DEFINE_TYPE_WITH_PRIVATE (CalendarWindow, calendar_window, GTK_TYPE_WINDOW)
@@ -117,12 +123,145 @@ static void    calendar_window_set_settings      (CalendarWindow *calwin,
 static gboolean calendar_window_get_locked_down   (CalendarWindow *calwin);
 static void    calendar_window_set_locked_down    (CalendarWindow *calwin,
 						   gboolean        locked_down);
-static GtkWidget * create_hig_frame 		  (CalendarWindow *calwin,
-		  				   const char *title,
-                  				   const char *button_label,
-		  				   const char *key,
-						   GCallback   callback,
-						   gboolean    bind_to_locked_down);
+
+static void
+expand_collapse_child (GtkWidget *child,
+		       gpointer   data)
+{
+	gboolean expanded;
+
+	if (data == child || gtk_widget_is_ancestor (data, child))
+		return;
+
+	expanded = gtk_expander_get_expanded (GTK_EXPANDER (data));
+	g_object_set (child, "visible", expanded, NULL);
+}
+
+static void
+expand_collapse (GtkWidget  *expander,
+                 GParamSpec *pspec,
+                 gpointer    data)
+{
+	GtkWidget *box = data;
+
+	gtk_container_foreach (GTK_CONTAINER (box),
+			       (GtkCallback)expand_collapse_child,
+			       expander);
+}
+
+static void
+add_child (GtkContainer *container,
+           GtkWidget    *child,
+           GtkExpander  *expander)
+{
+	expand_collapse_child (child, expander);
+}
+
+static GtkWidget *
+create_hig_frame_button (CalendarWindow *self,
+                         const char     *button_label,
+                         GCallback       callback,
+                         gboolean        bind_to_locked_down)
+{
+  GtkWidget *button;
+  GtkStyleContext *context;
+  GtkWidget *label;
+
+  button = gtk_button_new ();
+
+  context = gtk_widget_get_style_context (button);
+  gtk_style_context_add_class (context, "calendar-window-button");
+
+  label = gtk_label_new (button_label);
+  gtk_container_add (GTK_CONTAINER (button), label);
+  gtk_widget_show (label);
+
+  g_signal_connect_swapped (button, "clicked", callback, self);
+
+  if (bind_to_locked_down)
+    {
+      g_object_bind_property (self, "locked-down",
+                              button, "visible",
+                              G_BINDING_DEFAULT |
+                              G_BINDING_INVERT_BOOLEAN |
+                              G_BINDING_SYNC_CREATE);
+    }
+
+  return button;
+}
+
+static GtkWidget *
+create_hig_frame (CalendarWindow *calwin,
+                  const char     *title,
+                  const char     *key,
+                  GtkWidget      *first_button,
+                  ...)
+{
+        GtkWidget *vbox;
+        GtkWidget *hbox;
+        char      *bold_title;
+        GtkWidget *expander;
+        GtkWidget *button_box;
+        va_list    args;
+        GtkWidget *button;
+
+        vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 6);
+        gtk_widget_show (vbox);
+
+        hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
+        gtk_box_pack_start (GTK_BOX (vbox), hbox, FALSE, FALSE, 0);
+        gtk_widget_show (hbox);
+
+        bold_title = g_strdup_printf ("<b>%s</b>", title);
+        expander = gtk_expander_new (bold_title);
+        g_free (bold_title);
+
+        gtk_expander_set_use_markup (GTK_EXPANDER (expander), TRUE);
+        gtk_box_pack_start (GTK_BOX (hbox), expander, FALSE, FALSE, 0);
+        gtk_widget_show (expander);
+
+        g_signal_connect (expander,
+                          "notify::expanded",
+                          G_CALLBACK (expand_collapse),
+                          hbox);
+
+        g_signal_connect (expander,
+                          "notify::expanded",
+                          G_CALLBACK (expand_collapse),
+                          vbox);
+
+        g_settings_bind (calwin->priv->settings, key,
+                         expander, "expanded",
+                         G_SETTINGS_BIND_DEFAULT);
+
+        /* FIXME: this doesn't really work, since "add" does not
+         * get emitted for e.g. gtk_box_pack_start
+         */
+        g_signal_connect (vbox, "add", G_CALLBACK (add_child), expander);
+        g_signal_connect (hbox, "add", G_CALLBACK (add_child), expander);
+
+        button_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
+        gtk_box_pack_end (GTK_BOX (hbox), button_box, FALSE, FALSE, 0);
+        gtk_widget_show (button_box);
+
+        g_object_bind_property (expander, "expanded",
+                                button_box, "visible",
+                                G_BINDING_DEFAULT | G_BINDING_SYNC_CREATE);
+
+        va_start (args, first_button);
+        button = first_button;
+
+        while (button != NULL) {
+                gtk_container_add (GTK_CONTAINER (button_box), button);
+                gtk_widget_show (button);
+
+                button = va_arg (args, GtkWidget *);
+        }
+
+        va_end (args);
+
+        return vbox;
+}
 
 #ifdef HAVE_EDS
 
@@ -776,6 +915,7 @@ create_task_list (CalendarWindow *calwin,
                   GtkWidget     **tree_view,
                   GtkWidget     **scrolled_window)
 {
+        GtkWidget         *edit_btn;
         GtkWidget         *list;
         GtkWidget         *view;
         GtkWidget         *scrolled;
@@ -783,12 +923,17 @@ create_task_list (CalendarWindow *calwin,
         GtkTreeViewColumn *column;
         GtkTreeSelection  *selection;
 
-	list = create_hig_frame (calwin, 
-                                 _("Tasks"), _("Edit"),
+        edit_btn = create_hig_frame_button (calwin,
+                                            _("Edit"),
+                                            G_CALLBACK (edit_tasks),
+                                            FALSE);
+
+        list = create_hig_frame (calwin,
+                                 _("Tasks"),
                                  KEY_TASKS_EXPANDED,
-                                 G_CALLBACK (edit_tasks),
-				 FALSE);
- 
+                                 edit_btn,
+                                 NULL);
+
         *scrolled_window = scrolled = gtk_scrolled_window_new (NULL, NULL);
         gtk_scrolled_window_set_shadow_type (GTK_SCROLLED_WINDOW (scrolled),
                                              GTK_SHADOW_IN);
@@ -959,6 +1104,7 @@ create_list_for_appointment_model (CalendarWindow      *calwin,
 				   const char          *key,
                                    GCallback            callback)
 {
+        GtkWidget         *edit_btn;
         GtkWidget         *list;
         GtkWidget         *view;
         GtkWidget         *scrolled;
@@ -966,8 +1112,12 @@ create_list_for_appointment_model (CalendarWindow      *calwin,
         GtkTreeViewColumn *column;
 	GtkTreeSelection  *selection;
 
-	
-	list = create_hig_frame (calwin, label, _("Edit"), key, callback, FALSE);
+        edit_btn = create_hig_frame_button (calwin,
+                                            _("Edit"),
+                                            callback,
+                                            FALSE);
+
+        list = create_hig_frame (calwin, label, key, edit_btn, NULL);
 
         *scrolled_window = scrolled = gtk_scrolled_window_new (NULL, NULL);
         gtk_scrolled_window_set_shadow_type (GTK_SCROLLED_WINDOW (scrolled),
@@ -1444,118 +1594,6 @@ calendar_window_create_calendar (CalendarWindow *calwin)
 }
 
 static void
-expand_collapse_child (GtkWidget *child,
-		       gpointer   data)
-{
-	gboolean expanded;
-
-	if (data == child || gtk_widget_is_ancestor (data, child))
-		return;
-
-	expanded = gtk_expander_get_expanded (GTK_EXPANDER (data));
-	g_object_set (child, "visible", expanded, NULL);
-}
-
-static void
-expand_collapse (GtkWidget  *expander,
-		 GParamSpec *pspec,
-                 gpointer    data)
-{
-	GtkWidget *box = data;
-
-	gtk_container_foreach (GTK_CONTAINER (box),
-			       (GtkCallback)expand_collapse_child,
-			       expander);
-}
-
-static void add_child (GtkContainer *container,
-                       GtkWidget    *child,
-                       GtkExpander  *expander)
-{
-	expand_collapse_child (child, expander);
-}
-
-static GtkWidget *
-create_hig_frame (CalendarWindow *calwin,
-		  const char *title,
-                  const char *button_label,
-		  const char *key,
-		  GCallback   callback,
-		  gboolean    bind_to_locked_down)
-{
-        GtkWidget *vbox;
-        GtkWidget *label;
-        GtkWidget *hbox;
-        char      *bold_title;
-        GtkWidget *expander;
-
-        vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 6);
-
-        bold_title = g_strdup_printf ("<b>%s</b>", title);
-	expander = gtk_expander_new (bold_title);
-        g_free (bold_title);
-	gtk_expander_set_use_markup (GTK_EXPANDER (expander), TRUE);
-
-	hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
-	gtk_box_pack_start (GTK_BOX (vbox), hbox, FALSE, FALSE, 0);
-        gtk_box_pack_start (GTK_BOX (hbox), expander, FALSE, FALSE, 0);
-	gtk_widget_show_all (vbox);
-
-	g_signal_connect (expander, "notify::expanded",
-			  G_CALLBACK (expand_collapse), hbox);
-	g_signal_connect (expander, "notify::expanded",
-			  G_CALLBACK (expand_collapse), vbox);
-
-	/* FIXME: this doesn't really work, since "add" does not 
-	 * get emitted for e.g. gtk_box_pack_start
-	 */
-	g_signal_connect (vbox, "add", G_CALLBACK (add_child), expander);
-	g_signal_connect (hbox, "add", G_CALLBACK (add_child), expander);
-
-        if (button_label) {
-                GtkWidget *button_box;
-                GtkWidget *button;
-                gchar *text;
-
-                button_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
-                gtk_widget_show (button_box);
-
-                button = gtk_button_new ();
-                gtk_container_add (GTK_CONTAINER (button_box), button);
-
-                text = g_markup_printf_escaped ("<small>%s</small>", button_label);
-                label = gtk_label_new (text);
-                g_free (text);
-                gtk_label_set_use_markup (GTK_LABEL (label), TRUE);
-                gtk_container_add (GTK_CONTAINER (button), label);
-
-                gtk_widget_show_all (button);
-
-                gtk_box_pack_end (GTK_BOX (hbox), button_box, FALSE, FALSE, 0);
-
-                g_signal_connect_swapped (button, "clicked", callback, calwin);
-
-                g_object_bind_property (expander, "expanded",
-                                        button_box, "visible",
-                                        G_BINDING_DEFAULT|G_BINDING_SYNC_CREATE);
-
-                if (bind_to_locked_down) {
-                        g_object_bind_property (calwin, "locked-down",
-                                                button, "visible",
-                                                G_BINDING_DEFAULT |
-                                                G_BINDING_INVERT_BOOLEAN |
-                                                G_BINDING_SYNC_CREATE);
-                }
-        }
-
-        g_settings_bind (calwin->priv->settings, key,
-                         expander, "expanded",
-                         G_SETTINGS_BIND_DEFAULT);
-
-        return vbox;
-}
-
-static void
 edit_locations (CalendarWindow *calwin)
 {
 	g_signal_emit (calwin, signals[EDIT_LOCATIONS], 0);
@@ -1564,11 +1602,30 @@ edit_locations (CalendarWindow *calwin)
 static void
 calendar_window_pack_locations (CalendarWindow *calwin, GtkWidget *vbox)
 {
+	GtkWidget *edit_btn;
+	GtkStyleContext *context;
+
+	calwin->priv->locations_lock_btn = gtk_lock_button_new (NULL);
+
+	context = gtk_widget_get_style_context (calwin->priv->locations_lock_btn);
+	gtk_style_context_add_class (context, "calendar-window-button");
+
+	g_object_set (calwin->priv->locations_lock_btn,
+	              "tooltip-lock", _("Click to prevent further changes to timezone"),
+	              "tooltip-unlock", _("Click to make changes to timezone"),
+	              NULL);
+
+	edit_btn = create_hig_frame_button (calwin,
+	                                    _("Edit"),
+	                                    G_CALLBACK (edit_locations),
+	                                    TRUE);
+
 	calwin->priv->locations_list = create_hig_frame (calwin,
-							 _("Locations"), _("Edit"),
-							 KEY_LOCATIONS_EXPANDED,
-							 G_CALLBACK (edit_locations),
-							 TRUE);
+	                                                 _("Locations"),
+	                                                 KEY_LOCATIONS_EXPANDED,
+	                                                 calwin->priv->locations_lock_btn,
+	                                                 edit_btn,
+	                                                 NULL);
 
 	/* we show the widget before adding to the container, since adding to
 	 * the container changes the visibility depending on the state of the
@@ -1615,6 +1672,43 @@ GtkWidget *
 calendar_window_get_locations_box (CalendarWindow *calwin)
 {
 	return calwin->priv->locations_list;
+}
+
+static void
+permission_cb (GObject      *object,
+               GAsyncResult *res,
+               gpointer      user_data)
+{
+  GError *error;
+  GPermission *permission;
+  CalendarWindow *self;
+
+  error = NULL;
+  permission = polkit_permission_new_finish (res, &error);
+
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      g_error_free (error);
+      return;
+    }
+
+  self = CALENDAR_WINDOW (user_data);
+
+  g_clear_object (&self->priv->cancellable);
+
+  if (error != NULL)
+    {
+      g_warning ("%s", error->message);
+      g_error_free (error);
+      return;
+    }
+
+  self->priv->permission = permission;
+
+  gtk_lock_button_set_permission (GTK_LOCK_BUTTON (self->priv->locations_lock_btn),
+                                  self->priv->permission);
+
+  g_signal_emit (self, signals[PERMISSION_READY], 0);
 }
 
 static GObject *
@@ -1711,11 +1805,11 @@ calendar_window_set_property (GObject       *object,
 static void
 calendar_window_dispose (GObject *object)
 {
-#ifdef HAVE_EDS
 	CalendarWindow *calwin;
 
 	calwin = CALENDAR_WINDOW (object);
 
+#ifdef HAVE_EDS
         if (calwin->priv->client)
                 g_object_unref (calwin->priv->client);
         calwin->priv->client = NULL;
@@ -1743,9 +1837,16 @@ calendar_window_dispose (GObject *object)
         if (calwin->priv->weather_filter)
                 g_object_unref (calwin->priv->weather_filter);
         calwin->priv->weather_filter = NULL;
+#endif /* HAVE_EDS */
 
 	g_clear_object (&calwin->priv->settings);
-#endif /* HAVE_EDS */
+
+	if (calwin->priv->cancellable != NULL) {
+		g_cancellable_cancel (calwin->priv->cancellable);
+		g_clear_object (&calwin->priv->cancellable);
+	}
+
+	g_clear_object (&calwin->priv->permission);
 
 	G_OBJECT_CLASS (calendar_window_parent_class)->dispose (object);
 }
@@ -1772,6 +1873,17 @@ calendar_window_class_init (CalendarWindowClass *klass)
 						NULL,
 						NULL,
 						G_TYPE_NONE, 0);
+
+	signals[PERMISSION_READY] =
+		g_signal_new ("permission-ready",
+		              G_TYPE_FROM_CLASS (gobject_class),
+		              G_SIGNAL_RUN_FIRST,
+		              0,
+		              NULL,
+		              NULL,
+		              NULL,
+		              G_TYPE_NONE,
+		              0);
 
 	g_object_class_install_property (
 		gobject_class,
@@ -1830,6 +1942,13 @@ calendar_window_init (CalendarWindow *calwin)
 #ifdef HAVE_EDS
 	calwin->priv->previous_selection = NULL;
 #endif
+
+	calwin->priv->cancellable = g_cancellable_new ();
+	polkit_permission_new ("org.freedesktop.timedate1.set-timezone",
+	                       NULL,
+	                       calwin->priv->cancellable,
+	                       permission_cb,
+	                       calwin);
 }
 
 GtkWidget *
@@ -1996,4 +2115,10 @@ calendar_window_set_locked_down (CalendarWindow *calwin,
 	calwin->priv->locked_down = locked_down;
 
 	g_object_notify (G_OBJECT (calwin), "locked-down");
+}
+
+GPermission *
+calendar_window_get_permission (CalendarWindow *self)
+{
+  return self->priv->permission;
 }

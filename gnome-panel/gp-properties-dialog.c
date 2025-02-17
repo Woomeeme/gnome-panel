@@ -20,43 +20,44 @@
 #include <glib/gi18n.h>
 #include <libgnome-panel/gp-applet-info.h>
 
+#include "gp-module-manager.h"
 #include "gp-properties-dialog.h"
 #include "panel-schemas.h"
-#include "panel-applets-manager.h"
 #include "gp-applet-list-row.h"
 #include "panel-layout.h"
 
 struct _GpPropertiesDialog
 {
-  GtkWindow  parent;
+  GtkWindow      parent;
 
-  gchar     *toplevel_id;
+  GpApplication *application;
+  char          *toplevel_id;
 
-  GSettings *toplevel;
-  GSettings *theme;
+  GSettings     *toplevel;
+  GSettings     *theme;
 
-  GtkWidget *toplevel_writable;
-  GtkWidget *theme_writable;
+  GtkWidget     *toplevel_writable;
+  GtkWidget     *theme_writable;
 
-  GtkWidget *orientation;
-  GtkWidget *alignment;
-  GtkWidget *size;
-  GtkWidget *expand;
-  GtkWidget *auto_hide;
-  GtkWidget *enable_buttons;
-  GtkWidget *enable_arrows;
+  GtkWidget     *orientation;
+  GtkWidget     *alignment;
+  GtkWidget     *size;
+  GtkWidget     *expand;
+  GtkWidget     *auto_hide;
+  GtkWidget     *enable_buttons;
+  GtkWidget     *enable_arrows;
 
-  GtkWidget *custom_bg_color;
-  GtkWidget *bg_color_box;
-  GtkWidget *bg_color;
+  GtkWidget     *custom_bg_color;
+  GtkWidget     *bg_color_box;
+  GtkWidget     *bg_color;
 
-  GtkWidget *custom_bg_image;
-  GtkWidget *bg_image_box;
-  GtkWidget *bg_image;
-  GtkWidget *tile;
-  GtkWidget *stretch;
-  GtkWidget *fit;
-  GtkWidget *rotate;
+  GtkWidget     *custom_bg_image;
+  GtkWidget     *bg_image_box;
+  GtkWidget     *bg_image;
+  GtkWidget     *tile;
+  GtkWidget     *stretch;
+  GtkWidget     *fit;
+  GtkWidget     *rotate;
 
   GtkWidget *custom_fg_color;
   GtkWidget *fg_color_box;
@@ -72,6 +73,7 @@ enum
 {
   PROP_0,
 
+  PROP_APPLICATION,
   PROP_TOPLEVEL_ID,
 
   LAST_PROP
@@ -221,16 +223,16 @@ setup_toplevel_bindings (GpPropertiesDialog *dialog)
 
   text = GTK_COMBO_BOX_TEXT (dialog->orientation);
 
-  gtk_combo_box_text_append (text, "top", NC_("Orientation", "Top"));
-  gtk_combo_box_text_append (text, "bottom", NC_("Orientation", "Bottom"));
-  gtk_combo_box_text_append (text, "left", NC_("Orientation", "Left"));
-  gtk_combo_box_text_append (text, "right", NC_("Orientation", "Right"));
+  gtk_combo_box_text_append (text, "top", C_("Orientation", "Top"));
+  gtk_combo_box_text_append (text, "bottom", C_("Orientation", "Bottom"));
+  gtk_combo_box_text_append (text, "left", C_("Orientation", "Left"));
+  gtk_combo_box_text_append (text, "right", C_("Orientation", "Right"));
 
   text = GTK_COMBO_BOX_TEXT (dialog->alignment);
 
-  gtk_combo_box_text_append (text, "start", NC_("Alignment", "Start"));
-  gtk_combo_box_text_append (text, "center", NC_("Alignment", "Center"));
-  gtk_combo_box_text_append (text, "end", NC_("Alignment", "End"));
+  gtk_combo_box_text_append (text, "start", C_("Alignment", "Start"));
+  gtk_combo_box_text_append (text, "center", C_("Alignment", "Center"));
+  gtk_combo_box_text_append (text, "end", C_("Alignment", "End"));
 
   g_object_bind_property (dialog->expand,
                           "active",
@@ -332,18 +334,6 @@ setup_theme_bindings (GpPropertiesDialog *dialog)
   bg_image_changed_cb (dialog->theme, "bg-image", dialog);
 }
 
-static char *
-get_applet_iid (AppletInfo *info)
-{
-  return g_settings_get_string (info->settings, PANEL_OBJECT_IID_KEY);
-}
-
-static char *
-get_applet_id (AppletInfo *info)
-{
-  return g_strrstr (get_applet_iid(info), "::") + 2;
-}
-
 static PanelObjectPackType
 get_applet_pack_type (AppletInfo *info)
 {
@@ -354,27 +344,6 @@ static int
 get_applet_pack_index (AppletInfo *info)
 {
   return g_settings_get_int (info->settings, PANEL_OBJECT_PACK_INDEX_KEY);
-}
-
-static GpModule *
-get_module_from_id (GpModuleManager *manager,
-                    char            *iid)
-{
-  const gchar *applet_id;
-  gchar *module_id;
-  GpModule *module;
-
-  applet_id = g_strrstr (iid, "::");
-
-  if (!applet_id)
-    return FALSE;
-
-  module_id = g_strndup (iid, strlen (iid) - strlen (applet_id));
-
-  module = gp_module_manager_get_module (manager, module_id);
-  g_free (module_id);
-
-  return module;
 }
 
 static void
@@ -440,12 +409,19 @@ row_activated_cb (GtkListBox         *box,
                   GpPropertiesDialog *self)
 {
   AppletInfo *info;
+  PanelWidget *panel;
+  GpApplication *application;
+  PanelLayout *layout;
 
   info = gp_applet_list_row_get_applet_info (GP_APPLET_LIST_ROW (row));
 
   gtk_container_remove (GTK_CONTAINER (box), GTK_WIDGET (row));
 
-  panel_layout_delete_object (panel_applet_get_id (info));
+  panel = panel_applet_get_panel_widget (info);
+  application = panel_toplevel_get_application (panel->toplevel);
+  layout = gp_application_get_layout (application);
+
+  panel_layout_delete_object (layout, panel_applet_get_id (info));
 }
 
 static void
@@ -483,14 +459,15 @@ setup_applet_box_add_applets (GpPropertiesDialog *dialog,
   GpModuleManager *manager;
   GpModule *module;
 
-  manager = panel_applets_manager_get_module_manager ();
+  manager = gp_application_get_module_manager (dialog->application);
 
   for (iter = applets; iter; iter = iter->next)
     {
       AppletInfo *info;
       GtkWidget *applet_entry;
       const char * applet_toplevel_id;
-      const char * applet_id;
+      char *module_id;
+      char *applet_id;
 
       info = iter->data;
 
@@ -499,12 +476,16 @@ setup_applet_box_add_applets (GpPropertiesDialog *dialog,
       if (g_strcmp0 (applet_toplevel_id, dialog->toplevel_id) != 0)
         continue;
 
-      module = get_module_from_id (manager, get_applet_iid (info));
-      applet_id = get_applet_id (info);
+      module_id = g_settings_get_string (info->settings, PANEL_OBJECT_MODULE_ID_KEY);
+      applet_id = g_settings_get_string (info->settings, PANEL_OBJECT_APPLET_ID_KEY);
 
+      module = gp_module_manager_get_module (manager, module_id, NULL);
       applet_entry = gp_applet_list_row_new (module, applet_id, info);
 
       insert_applet_entry (dialog, info, applet_entry);
+
+      g_free (module_id);
+      g_free (applet_id);
     }
 
   gtk_widget_show_all (dialog->applet_box);
@@ -656,6 +637,10 @@ gp_properties_dialog_set_property (GObject      *object,
 
   switch (property_id)
     {
+      case PROP_APPLICATION:
+        dialog->application = g_value_get_object (value);
+        break;
+
       case PROP_TOPLEVEL_ID:
         dialog->toplevel_id = g_value_dup_string (value);
         break;
@@ -669,6 +654,15 @@ gp_properties_dialog_set_property (GObject      *object,
 static void
 install_properties (GObjectClass *object_class)
 {
+  properties[PROP_APPLICATION] =
+    g_param_spec_object ("app",
+                         "GpApplication",
+                         "GpApplication",
+                         GP_TYPE_APPLICATION,
+                         G_PARAM_CONSTRUCT_ONLY |
+                         G_PARAM_WRITABLE |
+                         G_PARAM_STATIC_STRINGS);
+
   properties[PROP_TOPLEVEL_ID] =
     g_param_spec_string ("toplevel-id", "toplevel-id", "toplevel-id",
                          NULL, G_PARAM_CONSTRUCT_ONLY | G_PARAM_WRITABLE |
@@ -748,9 +742,11 @@ gp_properties_dialog_init (GpPropertiesDialog *dialog)
 }
 
 GtkWidget *
-gp_properties_dialog_new (const gchar *toplevel_id)
+gp_properties_dialog_new (GpApplication *application,
+                          const char    *toplevel_id)
 {
   return g_object_new (GP_TYPE_PROPERTIES_DIALOG,
+                       "app", application,
                        "toplevel-id", toplevel_id,
                        NULL);
 }

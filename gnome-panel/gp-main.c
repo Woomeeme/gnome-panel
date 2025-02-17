@@ -24,12 +24,7 @@
 
 #include "gp-application.h"
 #include "gp-session.h"
-#include "libpanel-util/panel-cleanup.h"
-#include "panel-action-protocol.h"
 #include "panel-icon-names.h"
-#include "panel-layout.h"
-#include "panel-multiscreen.h"
-#include "panel-toplevel.h"
 
 typedef struct
 {
@@ -132,7 +127,7 @@ static void
 session_ready_cb (GpSession  *session,
                   GpMainData *main_data)
 {
-  GdkDisplay *display;
+  GError *error;
 
   g_unix_signal_add (SIGTERM, on_term_signal, main_data);
   g_unix_signal_add (SIGINT, on_int_signal, main_data);
@@ -140,21 +135,20 @@ session_ready_cb (GpSession  *session,
   g_set_application_name (_("Panel"));
   gtk_window_set_default_icon_name (PANEL_ICON_PANEL);
 
-  panel_action_protocol_init ();
-  panel_multiscreen_init ();
+  error = NULL;
+  main_data->application = gp_application_new (&error);
 
-  if (!panel_layout_load ())
+  if (error != NULL)
     {
+      g_warning ("%s", error->message);
+      g_error_free (error);
+
       main_loop_quit (main_data);
 
       main_data->exit_status = EXIT_FAILURE;
       return;
     }
 
-  display = gdk_display_get_default ();
-  gdk_display_flush (display);
-
-  main_data->application = gp_application_new ();
   gp_session_register (session);
 }
 
@@ -171,8 +165,6 @@ main (int argc, char *argv[])
   const char *autostart_id;
   GpMainData main_data;
   GpSession *session;
-  GSList *toplevels_to_destroy;
-  GSList *l;
 
   bindtextdomain (GETTEXT_PACKAGE, GNOMELOCALEDIR);
   bind_textdomain_codeset (GETTEXT_PACKAGE, "UTF-8");
@@ -220,14 +212,6 @@ main (int argc, char *argv[])
 
   g_main_loop_unref (main_data.loop);
   g_object_unref (session);
-
-  toplevels_to_destroy = g_slist_copy (panel_toplevel_list_toplevels ());
-  for (l = toplevels_to_destroy; l != NULL; l = l->next)
-    gtk_widget_destroy (l->data);
-
-  g_slist_free (toplevels_to_destroy);
-
-  panel_cleanup_do ();
 
   return main_data.exit_status;
 }

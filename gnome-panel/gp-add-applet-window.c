@@ -21,12 +21,14 @@
 #include <glib/gi18n.h>
 
 #include "gp-add-applet-window.h"
+#include "gp-applet-manager.h"
 #include "gp-applet-row.h"
 #include "gp-module-manager.h"
 #include "libgnome-panel/gp-applet-info-private.h"
 #include "libgnome-panel/gp-module-private.h"
 #include "libpanel-util/panel-glib.h"
-#include "panel-applets-manager.h"
+#include "panel-applet-frame.h"
+#include "panel-layout.h"
 
 struct _GpAddAppletWindow
 {
@@ -142,14 +144,16 @@ typedef struct
   PanelToplevel       *toplevel;
   PanelObjectPackType  pack_type;
   int                  pack_index;
-  char                *iid;
+  char                *module_id;
+  char                *applet_id;
 } InitialSetupData;
 
 static InitialSetupData *
 initial_setup_data_new (PanelToplevel       *toplevel,
                         PanelObjectPackType  pack_type,
                         int                  pack_index,
-                        const char          *iid)
+                        const char          *module_id,
+                        const char          *applet_id)
 {
   InitialSetupData *data;
 
@@ -158,7 +162,8 @@ initial_setup_data_new (PanelToplevel       *toplevel,
   data->toplevel = toplevel;
   data->pack_type = pack_type;
   data->pack_index = pack_index;
-  data->iid = g_strdup (iid);
+  data->module_id = g_strdup (module_id);
+  data->applet_id = g_strdup (applet_id);
 
   return data;
 }
@@ -170,7 +175,8 @@ initial_setup_data_free (gpointer user_data)
 
   data = (InitialSetupData *) user_data;
 
-  g_free (data->iid);
+  g_free (data->module_id);
+  g_free (data->applet_id);
   g_free (data);
 }
 
@@ -180,6 +186,7 @@ initial_setup_dialog_cb (GpInitialSetupDialog *dialog,
                          gpointer              user_data)
 {
   InitialSetupData *data;
+  GpApplication *application;
   GVariant *initial_settings;
 
   if (canceled)
@@ -187,13 +194,16 @@ initial_setup_dialog_cb (GpInitialSetupDialog *dialog,
 
   data = (InitialSetupData *) user_data;
 
-  initial_settings = gp_initital_setup_dialog_get_settings (dialog);
+  application = panel_toplevel_get_application (data->toplevel);
+  initial_settings = gp_initial_setup_dialog_get_settings (dialog);
 
-  panel_applet_frame_create (data->toplevel,
-                             data->pack_type,
-                             data->pack_index,
-                             data->iid,
-                             initial_settings);
+  panel_layout_object_create (gp_application_get_layout (application),
+                              data->module_id,
+                              data->applet_id,
+                              panel_toplevel_get_id (data->toplevel),
+                              data->pack_type,
+                              data->pack_index,
+                              initial_settings);
 
   g_variant_unref (initial_settings);
 }
@@ -203,30 +213,71 @@ row_activated_cb (GtkListBox        *box,
                   GtkListBoxRow     *row,
                   GpAddAppletWindow *self)
 {
-  const char *iid;
+  GpApplication *application;
+  GpAppletManager *applet_manager;
+  const char *module_id;
+  const char *applet_id;
   PanelWidget *panel;
   PanelObjectPackType pack_type;
   int pack_index;
   InitialSetupData *data;
 
-  iid = gp_applet_row_get_iid (GP_APPLET_ROW (row));
+  application = panel_toplevel_get_application (self->toplevel);
+  applet_manager = gp_application_get_applet_manager (application);
+
+  module_id = gp_applet_row_get_module_id (GP_APPLET_ROW (row));
+  applet_id = gp_applet_row_get_applet_id (GP_APPLET_ROW (row));
 
   pack_type = PANEL_OBJECT_PACK_START;
 
   panel = panel_toplevel_get_panel_widget (self->toplevel);
   pack_index = panel_widget_get_new_pack_index (panel, pack_type);
 
-  data = initial_setup_data_new (self->toplevel, pack_type, pack_index, iid);
+  data = initial_setup_data_new (self->toplevel,
+                                 pack_type,
+                                 pack_index,
+                                 module_id,
+                                 applet_id);
 
-  if (panel_applets_manager_open_initial_setup_dialog (iid,
-                                                       NULL,
-                                                       GTK_WINDOW (self),
-                                                       initial_setup_dialog_cb,
-                                                       data,
-                                                       initial_setup_data_free))
+  if (gp_applet_manager_open_initial_setup_dialog (applet_manager,
+                                                   module_id,
+                                                   applet_id,
+                                                   NULL,
+                                                   GTK_WINDOW (self),
+                                                   initial_setup_dialog_cb,
+                                                   data,
+                                                   initial_setup_data_free))
     return;
 
-  panel_applet_frame_create (self->toplevel, pack_type, pack_index, iid, NULL);
+  panel_layout_object_create (gp_application_get_layout (application),
+                              module_id,
+                              applet_id,
+                              panel_toplevel_get_id (self->toplevel),
+                              pack_type,
+                              pack_index,
+                              NULL);
+}
+
+static GtkWidget *
+error_row_new (const char *error)
+{
+  GtkWidget *row;
+  GtkWidget *label;
+  GtkStyleContext *context;
+
+  row = gtk_list_box_row_new ();
+
+  label = gtk_label_new (error);
+  gtk_container_add (GTK_CONTAINER (row), label);
+  gtk_widget_show (label);
+
+  g_object_set (label, "margin", 6, NULL);
+  gtk_label_set_xalign (GTK_LABEL (label), 0.0);
+
+  context = gtk_widget_get_style_context (label);
+  gtk_style_context_add_class (context, "error");
+
+  return row;
 }
 
 static void
@@ -291,15 +342,27 @@ add_module (GpAddAppletWindow *window,
       error = NULL;
       info = gp_module_get_applet_info (module, applets[i], &error);
 
+      if (g_error_matches (error,
+                           GP_MODULE_ERROR,
+                           GP_MODULE_ERROR_ABI_DOES_NOT_MATCH))
+        {
+          row = error_row_new ("Module ABI version does not match!");
+          gtk_list_box_prepend (GTK_LIST_BOX (list_box), row);
+          gtk_widget_show (row);
+          break;
+        }
+
       if (info == NULL)
         {
-          g_warning ("%s", error->message);
+          row = error_row_new (error->message);
           g_error_free (error);
 
+          gtk_list_box_prepend (GTK_LIST_BOX (list_box), row);
+          gtk_widget_show (row);
           continue;
         }
 
-      row = gp_applet_row_new (module, applets[i]);
+      row = gp_applet_row_new (window->toplevel, module, applets[i]);
       gtk_list_box_prepend (GTK_LIST_BOX (list_box), row);
       gtk_widget_show (row);
     }

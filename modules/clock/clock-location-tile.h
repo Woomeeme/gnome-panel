@@ -35,8 +35,7 @@ typedef struct
 
 GType clock_location_tile_get_type (void);
 
-ClockLocationTile *clock_location_tile_new (ClockLocation *loc,
-					    ClockFaceSize size);
+ClockLocationTile *clock_location_tile_new (ClockLocation *loc);
 
 ClockLocation *clock_location_tile_get_location (ClockLocationTile *this);
 
@@ -45,6 +44,9 @@ void weather_info_setup_tooltip (GWeatherInfo *info, ClockLocation *location, Gt
 
 void clock_location_tile_refresh (ClockLocationTile *this,
                                   gboolean           force_refresh);
+
+void clock_location_tile_set_permission (ClockLocationTile *self,
+                                         GPermission       *permission);
 
 G_END_DECLS
 #endif /* __CLOCK_H__ */

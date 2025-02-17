@@ -137,7 +137,8 @@ struct _GpModule
 
   GetAppletIdFromIidFunc   compatibility_func;
 
-  GetStandaloneMenuFunc    standalone_menu_func;
+  GpActionFlags            actions;
+  GpActionFunc             action_func;
 
   GHashTable              *applets;
 };
@@ -157,6 +158,24 @@ get_applets (va_list args)
   g_ptr_array_add (array, NULL);
 
   return (gchar **) g_ptr_array_free (array, FALSE);
+}
+
+static gboolean
+check_abi (GpModule  *module,
+           GError   **error)
+{
+  if (module->abi_version != GP_MODULE_ABI_VERSION)
+    {
+      g_set_error (error,
+                   GP_MODULE_ERROR,
+                   GP_MODULE_ERROR_ABI_DOES_NOT_MATCH,
+                   "Module “%s” ABI version does not match",
+                   module->id);
+
+      return FALSE;
+    }
+
+  return TRUE;
 }
 
 static gboolean
@@ -309,14 +328,6 @@ gp_module_new_from_path (const gchar *path)
 
   load_func (module);
 
-  if (module->abi_version != GP_MODULE_ABI_VERSION)
-    {
-      g_warning ("Module '%s' ABI version does not match", path);
-
-      g_object_unref (module);
-      return NULL;
-    }
-
   if (module->id == NULL || *module->id == '\0')
     {
       g_warning ("Module '%s' does not have valid id", module->path);
@@ -459,6 +470,9 @@ gp_module_get_applet_info (GpModule     *module,
 {
   g_return_val_if_fail (error == NULL || *error == NULL, NULL);
 
+  if (!check_abi (module, error))
+    return NULL;
+
   if (!is_valid_applet (module, applet, error))
     return NULL;
 
@@ -486,44 +500,51 @@ const gchar *
 gp_module_get_applet_id_from_iid (GpModule    *module,
                                   const gchar *old_iid)
 {
+  if (!check_abi (module, NULL))
+    return NULL;
+
   if (module->compatibility_func == NULL)
     return NULL;
 
   return module->compatibility_func (old_iid);
 }
 
-/**
- * gp_module_set_standalone_menu:
- * @module: a #GpModule
- * @func: the function to call to create a menu
- *
- * Specifies a function to be used to create standalone menu.
- */
 void
-gp_module_set_standalone_menu (GpModule              *module,
-                               GetStandaloneMenuFunc  func)
+gp_module_set_actions (GpModule      *self,
+                       GpActionFlags  actions,
+                       GpActionFunc   func)
 {
-  module->standalone_menu_func = func;
+  self->actions = actions;
+  self->action_func = func;
 }
 
-GtkWidget *
-gp_module_get_standalone_menu (GpModule *module,
-                               gboolean  enable_tooltips,
-                               gboolean  locked_down,
-                               guint     menu_icon_size)
+GpActionFlags
+gp_module_get_actions (GpModule *self)
 {
-  if (module->standalone_menu_func == NULL)
-    return NULL;
+  if (!check_abi (self, NULL))
+    return GP_ACTION_NONE;
 
-  return module->standalone_menu_func (enable_tooltips,
-                                       locked_down,
-                                       menu_icon_size);
+  return self->actions;
+}
+
+gboolean
+gp_module_handle_action (GpModule      *self,
+                         GpActionFlags  action,
+                         uint32_t       time)
+{
+  g_return_val_if_fail ((self->actions & action) == action, FALSE);
+  g_return_val_if_fail (self->action_func != NULL, FALSE);
+
+  if (!check_abi (self, NULL))
+    return FALSE;
+
+  return self->action_func (self, action, time);
 }
 
 /**
  * gp_module_applet_new:
  * @module: a #GpModule
- * @applet: the applet id
+ * @applet_id: the applet id
  * @settings_path: the #GSettings path to the per-instance settings
  * @initial_settings: initial settings
  * @error: return location for a #GError, or %NULL
@@ -534,20 +555,24 @@ gp_module_get_standalone_menu (GpModule *module,
  */
 GpApplet *
 gp_module_applet_new (GpModule     *module,
-                      const gchar  *applet,
+                      const gchar  *applet_id,
                       const gchar  *settings_path,
                       GVariant     *initial_settings,
                       GError      **error)
 {
   GpAppletInfo *info;
   GType type;
+  GpApplet *applet;
 
   g_return_val_if_fail (error == NULL || *error == NULL, NULL);
 
-  if (!is_valid_applet (module, applet, error))
+  if (!check_abi (module, error))
     return NULL;
 
-  info = get_applet_info (module, applet, error);
+  if (!is_valid_applet (module, applet_id, error))
+    return NULL;
+
+  info = get_applet_info (module, applet_id, error);
   if (info == NULL)
     return NULL;
 
@@ -556,18 +581,38 @@ gp_module_applet_new (GpModule     *module,
     {
       g_set_error (error, GP_MODULE_ERROR, GP_MODULE_ERROR_MISSING_APPLET_INFO,
                    "Module '%s' did not return required info about applet '%s'",
-                   module->id, applet);
+                   module->id, applet_id);
 
       return NULL;
     }
 
-  return g_object_new (type,
-                       "module", module,
-                       "id", applet,
-                       "settings-path", settings_path,
-                       "initial-settings", initial_settings,
-                       "gettext-domain", module->gettext_domain,
-                       NULL);
+  applet = g_object_new (type,
+                         "module", module,
+                         "id", applet_id,
+                         "settings-path", settings_path,
+                         "gettext-domain", module->gettext_domain,
+                         NULL);
+
+  if (initial_settings != NULL)
+    {
+      if (!GP_APPLET_GET_CLASS (applet)->initial_setup (applet,
+                                                        initial_settings,
+                                                        error))
+        {
+          g_object_ref_sink (applet);
+          g_object_unref (applet);
+          return NULL;
+        }
+    }
+
+  if (!g_initable_init (G_INITABLE (applet), NULL, error))
+    {
+      g_object_ref_sink (applet);
+      g_object_unref (applet);
+      return NULL;
+    }
+
+  return applet;
 }
 
 GtkWidget *
@@ -577,6 +622,9 @@ gp_module_create_about_dialog (GpModule   *module,
 {
   GpAppletInfo *info;
   GtkAboutDialog *dialog;
+
+  if (!check_abi (module, NULL))
+    return NULL;
 
   info = get_applet_info (module, applet, NULL);
   g_assert (info != NULL);
@@ -607,6 +655,9 @@ gp_module_show_help (GpModule   *module,
   GError *error;
   char *message;
   GtkWidget *dialog;
+
+  if (!check_abi (module, NULL))
+    return;
 
   info = get_applet_info (module, applet, NULL);
   g_assert (info != NULL);
@@ -677,6 +728,9 @@ gp_module_is_applet_disabled (GpModule         *module,
   gboolean is_disabled;
 
   g_return_val_if_fail (reason == NULL || *reason == NULL, FALSE);
+
+  if (!check_abi (module, NULL))
+    return FALSE;
 
   info = get_applet_info (module, applet, NULL);
   g_assert (info != NULL);

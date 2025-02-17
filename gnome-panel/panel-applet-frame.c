@@ -31,8 +31,9 @@
 #include <gdk/gdkkeysyms.h>
 #include <gdk/gdkx.h>
 
+#include "gp-applet-manager.h"
+#include "gp-error-applet.h"
 #include "gp-handle.h"
-#include "panel-applets-manager.h"
 #include "panel-bindings.h"
 #include "panel.h"
 #include "applet.h"
@@ -47,11 +48,7 @@
 #define PANEL_RESPONSE_DONT_RELOAD 1
 #define PANEL_RESPONSE_RELOAD      2
 
-static void panel_applet_frame_activating_free (PanelAppletFrameActivating *frame_act);
-
-static void panel_applet_frame_loading_failed  (const char  *iid,
-					        PanelWidget *panel,
-					        const char  *id);
+typedef struct _PanelAppletFrameActivating PanelAppletFrameActivating;
 
 struct _PanelAppletFrameActivating {
 	PanelWidget *panel;
@@ -69,7 +66,8 @@ struct _PanelAppletFramePrivate {
 
 	GpApplet        *applet;
 
-	gchar           *iid;
+	char            *module_id;
+	char            *applet_id;
 
 	GtkWidget       *handle;
 
@@ -362,6 +360,8 @@ remove_cb (GtkMenuItem      *menuitem,
            PanelAppletFrame *self)
 {
   AppletInfo *info;
+  GpApplication *application;
+  PanelLayout *layout;
 
   gp_applet_remove_from_panel (self->priv->applet);
 
@@ -371,7 +371,10 @@ remove_cb (GtkMenuItem      *menuitem,
   info = self->priv->applet_info;
   self->priv->applet_info = NULL;
 
-  panel_layout_delete_object (panel_applet_get_id (info));
+  application = panel_toplevel_get_application (self->priv->panel->toplevel);
+  layout = gp_application_get_layout (application);
+
+  panel_layout_delete_object (layout, panel_applet_get_id (info));
 }
 
 static void
@@ -382,6 +385,8 @@ frame_popup_edit_menu (PanelAppletFrame *self,
   GtkWidget *menu;
   GtkWidget *menuitem;
   gboolean movable;
+  GpApplication *application;
+  PanelLayout *layout;
   gboolean removable;
 
   menu = gtk_menu_new ();
@@ -390,7 +395,9 @@ frame_popup_edit_menu (PanelAppletFrame *self,
   if (self->priv->applet_info != NULL)
     movable = panel_applet_can_freely_move (self->priv->applet_info);
 
-  removable = panel_layout_is_writable ();
+  application = panel_toplevel_get_application (self->priv->panel->toplevel);
+  layout = gp_application_get_layout (application);
+  removable = panel_layout_is_writable (layout);
 
   menuitem = gtk_menu_item_new_with_mnemonic (_("_Move"));
   gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
@@ -483,10 +490,8 @@ panel_applet_frame_finalize (GObject *object)
 {
 	PanelAppletFrame *frame = PANEL_APPLET_FRAME (object);
 
-	panel_applets_manager_factory_deactivate (frame->priv->iid);
-
-	g_free (frame->priv->iid);
-	frame->priv->iid = NULL;
+	g_clear_pointer (&frame->priv->module_id, g_free);
+	g_clear_pointer (&frame->priv->applet_id, g_free);
 
         G_OBJECT_CLASS (panel_applet_frame_parent_class)->finalize (object);
 }
@@ -669,8 +674,10 @@ panel_applet_frame_sync_menu_state (PanelLockdown *lockdown,
 	gboolean          locked_down;
 	GpLockdownFlags   lockdowns;
 
-	locked_down = panel_lockdown_get_panels_locked_down_s ();
-	lockdowns = panel_lockdown_get_flags_s (frame->priv->iid);
+	locked_down = panel_lockdown_get_panels_locked_down (lockdown);
+	lockdowns = panel_lockdown_get_flags (lockdown,
+	                                      frame->priv->module_id,
+	                                      frame->priv->applet_id);
 
 	gp_applet_set_locked_down (frame->priv->applet, locked_down);
 	gp_applet_set_lockdowns (frame->priv->applet, lockdowns);
@@ -739,7 +746,7 @@ flags_changed_cb (GpApplet         *applet,
   update_flags (self);
 }
 
-void
+static void
 _panel_applet_frame_set_applet (PanelAppletFrame *self,
                                 GpApplet         *applet)
 {
@@ -754,37 +761,19 @@ _panel_applet_frame_set_applet (PanelAppletFrame *self,
   gtk_widget_show (GTK_WIDGET (applet));
 }
 
-void
-_panel_applet_frame_set_iid (PanelAppletFrame *frame,
-			     const gchar      *iid)
+static GpApplication *
+get_application (PanelWidget *panel)
 {
-	if (frame->priv->iid)
-		g_free (frame->priv->iid);
-	frame->priv->iid = g_strdup (iid);
+  return panel_toplevel_get_application (panel->toplevel);
 }
 
-void
-_panel_applet_frame_activated (PanelAppletFrame           *frame,
-			       PanelAppletFrameActivating *frame_act,
-			       GError                     *error)
+static void
+panel_applet_frame_activated (PanelAppletFrame           *frame,
+                              PanelAppletFrameActivating *frame_act)
 {
 	AppletInfo *info;
-
-	g_assert (frame->priv->iid != NULL);
-
-	if (error != NULL) {
-		g_warning ("Failed to load applet %s:\n%s",
-			   frame->priv->iid, error->message);
-		g_error_free (error);
-
-		panel_applet_frame_loading_failed (frame->priv->iid,
-						   frame_act->panel,
-						   frame_act->id);
-		panel_applet_frame_activating_free (frame_act);
-		gtk_widget_destroy (GTK_WIDGET (frame));
-
-		return;
-	}
+	GpApplication *application;
+	PanelLockdown *lockdown;
 
 	frame->priv->panel = frame_act->panel;
 	gtk_widget_show (GTK_WIDGET (frame));
@@ -795,27 +784,23 @@ _panel_applet_frame_activated (PanelAppletFrame           *frame,
 	                              frame_act->settings);
 	frame->priv->applet_info = info;
 
-	panel_lockdown_on_notify (panel_lockdown_get (),
+	application = panel_toplevel_get_application (frame_act->panel->toplevel);
+	lockdown = gp_application_get_lockdown (application);
+
+	panel_lockdown_on_notify (lockdown,
 				  NULL,
 				  G_OBJECT (frame),
 				  panel_applet_frame_sync_menu_state,
 				  frame);
-	panel_applet_frame_sync_menu_state (panel_lockdown_get (), frame);
+	panel_applet_frame_sync_menu_state (lockdown, frame);
 
 	panel_applet_frame_init_properties (frame);
 
-	panel_object_loader_stop_loading (frame_act->id);
-	panel_applet_frame_activating_free (frame_act);
+	panel_object_loader_stop_loading (get_application (frame_act->panel),
+	                                  frame_act->id);
 }
 
 /* Generic methods */
-
-static GSList *no_reload_applets = NULL;
-
-enum {
-	LOADING_FAILED_RESPONSE_DONT_DELETE,
-	LOADING_FAILED_RESPONSE_DELETE
-};
 
 static void
 panel_applet_frame_activating_free (PanelAppletFrameActivating *frame_act)
@@ -825,19 +810,25 @@ panel_applet_frame_activating_free (PanelAppletFrameActivating *frame_act)
 	g_free (frame_act);
 }
 
-PanelOrientation
+static PanelOrientation
 panel_applet_frame_activating_get_orientation (PanelAppletFrameActivating *frame_act)
 {
 	return panel_widget_get_applet_orientation (frame_act->panel);
 }
 
-gboolean
+static gboolean
 panel_applet_frame_activating_get_locked_down (PanelAppletFrameActivating *frame_act)
 {
-	return panel_lockdown_get_panels_locked_down_s ();
+	GpApplication *application;
+	PanelLockdown *lockdown;
+
+	application = panel_toplevel_get_application (frame_act->panel->toplevel);
+	lockdown = gp_application_get_lockdown (application);
+
+	return panel_lockdown_get_panels_locked_down (lockdown);
 }
 
-gchar *
+static char *
 panel_applet_frame_activating_get_settings_path (PanelAppletFrameActivating *frame_act)
 {
         char *path;
@@ -851,7 +842,7 @@ panel_applet_frame_activating_get_settings_path (PanelAppletFrameActivating *fra
 	return path_instance;
 }
 
-gchar *
+static char *
 panel_applet_frame_activating_get_initial_settings_path (PanelAppletFrameActivating *frame_act)
 {
         char *path;
@@ -864,125 +855,311 @@ panel_applet_frame_activating_get_initial_settings_path (PanelAppletFrameActivat
         return path_instance;
 }
 
-static void
-panel_applet_frame_loading_failed_response (GtkWidget *dialog,
-					    guint      response,
-					    char      *id)
+typedef struct
 {
-	gtk_widget_destroy (dialog);
+  PanelWidget *panel;
+  char        *id;
+} DeleteData;
 
-	if (response == LOADING_FAILED_RESPONSE_DELETE &&
-	    !panel_lockdown_get_panels_locked_down_s () &&
-	    panel_layout_is_writable ()) {
-		GSList *item;
+static void
+delete_data_free (gpointer data,
+                  GClosure *closure)
+{
+  DeleteData *delete_data;
 
-		item = g_slist_find_custom (no_reload_applets, id,
-					    (GCompareFunc) strcmp);
-		if (item) {
-			g_free (item->data);
-			no_reload_applets = g_slist_delete_link (no_reload_applets,
-								 item);
-		}
+  delete_data = data;
 
-		panel_layout_delete_object (id);
-	}
-
-	g_free (id);
+  g_free (delete_data->id);
+  g_free (delete_data);
 }
 
 static void
-panel_applet_frame_loading_failed (const char  *iid,
-				   PanelWidget *panel,
-				   const char  *id)
+delete_cb (GpErrorApplet *applet,
+           DeleteData    *data)
 {
-	GtkWidget *dialog;
-	char      *problem_txt;
-	gboolean   locked_down;
+  GpApplication *application;
+  PanelLockdown *lockdown;
+  PanelLayout *layout;
 
-	no_reload_applets = g_slist_prepend (no_reload_applets,
-					     g_strdup (id));
+  application = panel_toplevel_get_application (data->panel->toplevel);
+  lockdown = gp_application_get_lockdown (application);
+  layout = gp_application_get_layout (application);
 
-	locked_down = panel_lockdown_get_panels_locked_down_s ();
+  if (panel_lockdown_get_panels_locked_down (lockdown) ||
+      !panel_layout_is_writable (layout))
+    return;
 
-	problem_txt = g_strdup_printf (_("The panel encountered a problem "
-					 "while loading \"%s\"."),
-				       iid);
-
-	dialog = gtk_message_dialog_new (NULL, 0,
-					 locked_down ? GTK_MESSAGE_INFO : GTK_MESSAGE_WARNING,
-					 GTK_BUTTONS_NONE,
-					 "%s", problem_txt);
-	g_free (problem_txt);
-
-	if (locked_down) {
-		gtk_dialog_add_buttons (GTK_DIALOG (dialog),
-					_("OK"), LOADING_FAILED_RESPONSE_DONT_DELETE,
-					NULL);
-	} else {
-		gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG (dialog),
-					_("Do you want to delete the applet "
-					  "from your configuration?"));
-		gtk_dialog_add_buttons (GTK_DIALOG (dialog),
-					_("D_on't Delete"), LOADING_FAILED_RESPONSE_DONT_DELETE,
-					_("_Delete"), LOADING_FAILED_RESPONSE_DELETE,
-					NULL);
-	}
-
-	gtk_dialog_set_default_response (GTK_DIALOG (dialog),
-					 LOADING_FAILED_RESPONSE_DONT_DELETE);
-
-	gtk_window_set_screen (GTK_WINDOW (dialog),
-			       gtk_window_get_screen (GTK_WINDOW (panel->toplevel)));
-
-	g_signal_connect (dialog, "response",
-			  G_CALLBACK (panel_applet_frame_loading_failed_response),
-			  g_strdup (id));
-
-	panel_widget_register_open_dialog (panel, dialog);
-	gtk_window_set_urgency_hint (GTK_WINDOW (dialog), TRUE);
-	/* FIXME: http://bugzilla.gnome.org/show_bug.cgi?id=165132 */
-	gtk_window_set_title (GTK_WINDOW (dialog), _("Error"));
-
-	gtk_widget_show_all (dialog);
-
-	/* Note: this call will free the memory for id, so the variable should
-	 * not get accessed afterwards. */
-	panel_object_loader_stop_loading (id);
+  panel_layout_delete_object (layout, data->id);
 }
 
 static void
-panel_applet_frame_load_helper (const gchar *iid,
-				PanelWidget *panel,
-				const char  *id,
-				GSettings   *settings)
+frame_activate (const char                 *module_id,
+                const char                 *applet_id,
+                PanelAppletFrameActivating *frame_act,
+                GpApplet                   *applet);
+
+static void
+panel_applet_frame_loading_failed (const char                 *module_id,
+                                   const char                 *applet_id,
+                                   PanelAppletFrameActivating *frame_act,
+                                   GError                     *error)
 {
+  GpApplication *application;
+  GpErrorApplet *applet;
+  DeleteData *data;
+
+  application = panel_toplevel_get_application (frame_act->panel->toplevel);
+  applet = gp_error_applet_new (module_id, applet_id, error, application);
+
+  data = g_new0 (DeleteData, 1);
+  data->panel = frame_act->panel;
+  data->id = g_strdup (frame_act->id);
+
+  g_signal_connect_data (applet,
+                         "delete",
+                         G_CALLBACK (delete_cb),
+                         data,
+                         delete_data_free,
+                         0);
+
+  frame_activate (module_id, applet_id, frame_act, GP_APPLET (applet));
+}
+
+static GVariant *
+get_initial_settings (PanelAppletFrameActivating *frame_act)
+{
+  gchar *path;
+  GSettings *settings;
+  GVariant *initial_settings;
+
+  path = panel_applet_frame_activating_get_initial_settings_path (frame_act);
+  settings = g_settings_new_with_path ("org.gnome.gnome-panel.applet.initial-settings", path);
+  g_free (path);
+
+  initial_settings = g_settings_get_user_value (settings, "settings");
+  g_object_unref (settings);
+
+  return initial_settings;
+}
+
+static void
+remove_initial_settings (PanelAppletFrameActivating *frame_act)
+{
+  gchar *path;
+  GSettings *settings;
+
+  path = panel_applet_frame_activating_get_initial_settings_path (frame_act);
+  settings = g_settings_new_with_path ("org.gnome.gnome-panel.applet.initial-settings", path);
+  g_free (path);
+
+  g_settings_reset (settings, "settings");
+  g_object_unref (settings);
+}
+
+static void
+applet_setup (GpApplet                   *applet,
+              PanelAppletFrameActivating *frame_act)
+{
+  gboolean locked_down;
+  PanelOrientation panel_orientation;
+  GtkOrientation orientation;
+  GtkPositionType position;
+  GpApplication *application;
+  GSettings *general_settings;
+  gboolean enable_tooltips;
+  gboolean prefer_symbolic_icons;
+  guint menu_icon_size;
+  guint panel_icon_size;
+
+  locked_down = panel_applet_frame_activating_get_locked_down (frame_act);
+  panel_orientation = panel_applet_frame_activating_get_orientation (frame_act);
+
+  switch (panel_orientation)
+    {
+      case PANEL_ORIENTATION_BOTTOM:
+        orientation = GTK_ORIENTATION_HORIZONTAL;
+        position = GTK_POS_BOTTOM;
+        break;
+      case PANEL_ORIENTATION_LEFT:
+        orientation = GTK_ORIENTATION_VERTICAL;
+        position = GTK_POS_LEFT;
+        break;
+      case PANEL_ORIENTATION_RIGHT:
+        orientation = GTK_ORIENTATION_VERTICAL;
+        position = GTK_POS_RIGHT;
+        break;
+      case PANEL_ORIENTATION_TOP:
+      default:
+        orientation = GTK_ORIENTATION_HORIZONTAL;
+        position = GTK_POS_TOP;
+        break;
+    }
+
+  gp_applet_set_locked_down (applet, locked_down);
+  gp_applet_set_orientation (applet, orientation);
+  gp_applet_set_position (applet, position);
+
+  application = panel_toplevel_get_application (frame_act->panel->toplevel);
+  general_settings = gp_application_get_general_settings (application);
+
+  enable_tooltips = g_settings_get_boolean (general_settings,
+                                            "enable-tooltips");
+  gp_applet_set_enable_tooltips (applet, enable_tooltips);
+
+  prefer_symbolic_icons = g_settings_get_boolean (general_settings,
+                                                  "prefer-symbolic-icons");
+  gp_applet_set_prefer_symbolic_icons (applet, prefer_symbolic_icons);
+
+  menu_icon_size = g_settings_get_enum (general_settings, "menu-icon-size");
+  gp_applet_set_menu_icon_size (applet, menu_icon_size);
+
+  panel_icon_size = panel_widget_get_icon_size (frame_act->panel);
+  gp_applet_set_panel_icon_size (applet, panel_icon_size);
+}
+
+static void
+frame_activate (const char                 *module_id,
+                const char                 *applet_id,
+                PanelAppletFrameActivating *frame_act,
+                GpApplet                   *applet)
+{
+  PanelAppletFrame *frame;
+
+  applet_setup (applet, frame_act);
+
+  frame = g_object_new (PANEL_TYPE_APPLET_FRAME, NULL);
+
+  _panel_applet_frame_set_applet (frame, applet);
+
+  frame->priv->module_id = g_strdup (module_id);
+  frame->priv->applet_id = g_strdup (applet_id);
+
+  panel_applet_frame_activated (frame, frame_act);
+}
+
+static void
+panel_applet_frame_load_helper (const char  *module_id,
+                                const char  *applet_id,
+                                PanelWidget *panel,
+                                const char  *id,
+                                GSettings   *settings)
+{
+	GpApplication *application;
+	GpAppletManager *applet_manager;
+	GError *error;
 	PanelAppletFrameActivating *frame_act;
+	char *settings_path;
+	GVariant *initial_settings;
+	GpApplet *applet;
 
-	if (g_slist_find_custom (no_reload_applets, id,
-				 (GCompareFunc) strcmp)) {
-		panel_object_loader_stop_loading (id);
-		return;
-	}
-
-	if (panel_applets_manager_get_applet_info (iid) == NULL) {
-		panel_applet_frame_loading_failed (iid, panel, id);
-		return;
-	}
-
-	if (panel_applets_manager_is_applet_disabled (iid, NULL)) {
-		panel_object_loader_stop_loading (id);
-		return;
-	}
+	application = panel_toplevel_get_application (panel->toplevel);
+	applet_manager = gp_application_get_applet_manager (application);
 
 	frame_act = g_new0 (PanelAppletFrameActivating, 1);
-	frame_act->panel    = panel;
-	frame_act->id       = g_strdup (id);
+	frame_act->panel = panel;
+	frame_act->id = g_strdup (id);
 	frame_act->settings = g_object_ref (settings);
 
-	if (!panel_applets_manager_load_applet (iid, frame_act)) {
-		panel_applet_frame_loading_failed (iid, panel, id);
+	error = NULL;
+	if (gp_applet_manager_get_applet_info (applet_manager,
+	                                       module_id,
+	                                       applet_id,
+	                                       &error) == NULL) {
+		panel_applet_frame_loading_failed (module_id, applet_id, frame_act, error);
 		panel_applet_frame_activating_free (frame_act);
+		g_error_free (error);
+		return;
 	}
+
+	if (gp_applet_manager_is_applet_disabled (applet_manager,
+	                                          module_id,
+	                                          applet_id,
+	                                          NULL)) {
+		panel_object_loader_stop_loading (application, id);
+		return;
+	}
+
+	settings_path = panel_applet_frame_activating_get_settings_path (frame_act);
+	initial_settings = get_initial_settings (frame_act);
+
+	error = NULL;
+	applet = gp_applet_manager_load_applet (applet_manager,
+	                                        module_id,
+	                                        applet_id,
+	                                        settings_path,
+	                                        initial_settings,
+	                                        &error);
+
+	g_clear_pointer (&initial_settings, g_variant_unref);
+	g_free (settings_path);
+
+	if (applet == NULL) {
+		panel_applet_frame_loading_failed (module_id, applet_id, frame_act, error);
+		panel_applet_frame_activating_free (frame_act);
+		g_error_free (error);
+		return;
+	}
+
+	remove_initial_settings (frame_act);
+
+	frame_activate (module_id, applet_id, frame_act, applet);
+	panel_applet_frame_activating_free (frame_act);
+}
+
+static void
+migrate_iid_to_ids (PanelWidget *panel,
+                    GSettings   *settings)
+{
+  char *applet_iid;
+  const char *applet_id;
+  char *module_id;
+  GpApplication *application;
+  GpAppletManager *applet_manager;
+
+  applet_iid = g_settings_get_string (settings, PANEL_OBJECT_IID_KEY);
+
+  if (*applet_iid == '\0')
+    {
+      g_free (applet_iid);
+      return;
+    }
+
+  applet_id = g_strrstr (applet_iid, "::");
+  module_id = g_strndup (applet_iid, strlen (applet_iid) - strlen (applet_id));
+  applet_id += 2;
+
+  application = panel_toplevel_get_application (panel->toplevel);
+  applet_manager = gp_application_get_applet_manager (application);
+
+  if (!gp_applet_manager_get_applet_info (applet_manager,
+                                          module_id,
+                                          applet_id,
+                                          NULL))
+    {
+      char *new_iid;
+
+      new_iid = gp_applet_manager_get_new_iid (applet_manager, applet_iid);
+
+      if (new_iid != NULL)
+        {
+          g_free (applet_iid);
+          g_free (module_id);
+
+          applet_iid = new_iid;
+
+          applet_id = g_strrstr (applet_iid, "::");
+          module_id = g_strndup (applet_iid,
+                                 strlen (applet_iid) - strlen (applet_id));
+          applet_id += 2;
+        }
+    }
+
+  g_settings_set_string (settings, PANEL_OBJECT_MODULE_ID_KEY, module_id);
+  g_settings_set_string (settings, PANEL_OBJECT_APPLET_ID_KEY, applet_id);
+  g_settings_reset (settings, PANEL_OBJECT_IID_KEY);
+
+  g_free (applet_iid);
+  g_free (module_id);
 }
 
 void
@@ -990,41 +1167,23 @@ panel_applet_frame_load (PanelWidget *panel_widget,
 			 const char  *id,
 			 GSettings   *settings)
 {
-	gchar *applet_iid;
+	char *module_id;
+	char *applet_id;
 
 	g_return_if_fail (panel_widget != NULL);
 	g_return_if_fail (id != NULL);
 
-	applet_iid = g_settings_get_string (settings, PANEL_OBJECT_IID_KEY);
+	migrate_iid_to_ids (panel_widget, settings);
 
-	if (!panel_applets_manager_get_applet_info (applet_iid)) {
-		gchar *new_iid;
+	module_id = g_settings_get_string (settings, PANEL_OBJECT_MODULE_ID_KEY);
+	applet_id = g_settings_get_string (settings, PANEL_OBJECT_APPLET_ID_KEY);
 
-		new_iid = panel_applets_manager_get_new_iid (applet_iid);
+	panel_applet_frame_load_helper (module_id,
+	                                applet_id,
+	                                panel_widget,
+	                                id,
+	                                settings);
 
-		if (new_iid != NULL) {
-			g_settings_set_string (settings, PANEL_OBJECT_IID_KEY, new_iid);
-			g_free (applet_iid);
-
-			applet_iid = new_iid;
-		}
-	}
-
-	panel_applet_frame_load_helper (applet_iid, panel_widget, id, settings);
-	g_free (applet_iid);
-}
-
-void
-panel_applet_frame_create (PanelToplevel       *toplevel,
-			   PanelObjectPackType  pack_type,
-			   int                  pack_index,
-			   const char          *iid,
-			   GVariant            *initial_settings)
-{
-	g_return_if_fail (iid != NULL);
-
-	panel_layout_object_create (iid,
-				    panel_toplevel_get_id (toplevel),
-				    pack_type, pack_index,
-				    initial_settings);
+	g_free (module_id);
+	g_free (applet_id);
 }

@@ -58,19 +58,21 @@ panel-toplevel.vertical gp-menu-button .icon {
 }
 
 na-tray-applet {
-  -NaTrayApplet-icon-padding: 2;
+  -NaApplet-icon-padding: 4;
 }
 
 gp-applet.separator > separator {
   margin: 2px 4px;
 }
 
-.horizontal sn-item {
-  padding: 0px 3px;
+.horizontal sn-item,
+.horizontal .system-indicators > menubar > menuitem {
+  padding: 0px 4px;
 }
 
-.vertical sn-item {
-  padding: 3px 0px;
+.vertical sn-item,
+.vertical .system-indicators > menubar > menuitem {
+  padding: 4px 0px;
 }
 
 #tasklist-button,
@@ -110,4 +112,26 @@ gp-handle {
 
 .context-row {
   padding: 4px 10px;
+}
+
+.calendar-window-button {
+  border-radius: 3px;
+  padding: 4px 8px;
+  min-height: 16px;
+}
+
+.calendar-window-button label {
+  font-size: smaller;
+}
+
+gp-applet.error button {
+  border-radius: 3px;
+}
+
+.horizontal gp-applet.error button {
+  padding: 0 4px;
+}
+
+.vertical gp-applet.error button {
+  padding: 4px 0;
 }

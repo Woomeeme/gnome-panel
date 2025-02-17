@@ -17,7 +17,6 @@
 #include <gio/gio.h>
 
 #include "clock-location.h"
-#include "set-timezone.h"
 
 struct _ClockLocationPrivate {
         gchar *name;
@@ -31,6 +30,8 @@ struct _ClockLocationPrivate {
 
         gdouble latitude;
         gdouble longitude;
+
+        gboolean current;
 
         GWeatherInfo *weather_info;
 	gint          weather_timeout;
@@ -107,7 +108,8 @@ clock_location_new (GnomeWallClock   *wall_clock,
                     const char       *metar_code,
                     gboolean          override_latlon,
                     gdouble           latitude,
-                    gdouble           longitude)
+                    gdouble           longitude,
+                    gboolean          current)
 {
         ClockLocation *this;
         ClockLocationPrivate *priv;
@@ -133,6 +135,8 @@ clock_location_new (GnomeWallClock   *wall_clock,
 		gweather_location_get_coords (priv->loc, &priv->latitude, &priv->longitude);
 	}
 
+	priv->current = current;
+
 	priv->tz = get_gweather_timezone (this);
 
 	if (priv->tz == NULL) {
@@ -146,8 +150,6 @@ clock_location_new (GnomeWallClock   *wall_clock,
 
         return this;
 }
-
-static ClockLocation *current_location = NULL;
 
 static void
 clock_location_class_init (ClockLocationClass *this_class)
@@ -327,25 +329,7 @@ clock_location_is_current_timezone (ClockLocation *loc)
 gboolean
 clock_location_is_current (ClockLocation *loc)
 {
-	if (current_location == loc)
-		return TRUE;
-	else if (current_location != NULL)
-		return FALSE;
-
-	if (clock_location_is_current_timezone (loc)) {
-		/* Note that some code in clock.c depends on the fact that
-		 * calling this function can set the current location if
-		 * there's none */
-		current_location = loc;
-		g_object_add_weak_pointer (G_OBJECT (current_location), 
-					   (gpointer *)&current_location);
-		g_signal_emit (current_location, location_signals[SET_CURRENT],
-			       0, NULL);
-
-		return TRUE;
-	}
-
-	return FALSE;
+  return loc->priv->current;
 }
 
 glong
@@ -373,86 +357,19 @@ clock_location_get_offset (ClockLocation *loc)
   return system_offset - location_offset;
 }
 
-typedef struct {
-	ClockLocation *location;
-	GFunc callback;
-	gpointer data;
-	GDestroyNotify destroy;
-} MakeCurrentData;
-
-static void
-make_current_cb (GObject      *source,
-                 GAsyncResult *result,
-                 gpointer      user_data)
-{
-	MakeCurrentData *mcdata = user_data;
-	GError *error = NULL;
-
-	set_system_timezone_finish (result, &error);
-
-	if (error == NULL) {
-		if (current_location)
-			g_object_remove_weak_pointer (G_OBJECT (current_location), 
-						      (gpointer *)&current_location);
-		current_location = mcdata->location;
-		g_object_add_weak_pointer (G_OBJECT (current_location), 
-					   (gpointer *)&current_location);
-		g_signal_emit (current_location, location_signals[SET_CURRENT],
-			       0, NULL);
-	}
-
-	if (mcdata->callback)
-		mcdata->callback (mcdata->data, error);
-	else
-		g_error_free (error);
-
-	if (mcdata->destroy)
-		mcdata->destroy (mcdata->data);
-	
-	g_object_unref (mcdata->location);
-	g_free (mcdata);
-}
-
 void
-clock_location_make_current (ClockLocation *loc,
-                             GFunc          callback,
-                             gpointer       data,
-                             GDestroyNotify destroy)
+clock_location_set_current (ClockLocation *self,
+                            gboolean       current)
 {
-	MakeCurrentData *mcdata;
+  if (self->priv->current == current)
+    return;
 
-        if (loc == current_location) {
-                if (destroy)
-                        destroy (data);
-                return;
-        }
+  self->priv->current = current;
 
-	if (clock_location_is_current_timezone (loc)) {
-		if (current_location)
-			g_object_remove_weak_pointer (G_OBJECT (current_location), 
-						      (gpointer *)&current_location);
-		current_location = loc;
-		g_object_add_weak_pointer (G_OBJECT (current_location), 
-					   (gpointer *)&current_location);
-		g_signal_emit (current_location, location_signals[SET_CURRENT],
-			       0, NULL);
-		if (callback)
-               		callback (data, NULL);
-		if (destroy)
-			destroy (data);	
-		return;
-	}
-
-	mcdata = g_new (MakeCurrentData, 1);
-
-	mcdata->location = g_object_ref (loc);
-	mcdata->callback = callback;
-	mcdata->data = data;
-	mcdata->destroy = destroy;
-
-	set_system_timezone_async (g_time_zone_get_identifier (loc->priv->tz),
-	                           make_current_cb,
-	                           mcdata);
+  g_signal_emit (self,
+                 location_signals[SET_CURRENT],
+                 0,
+                 NULL);
 }
 
 const gchar *

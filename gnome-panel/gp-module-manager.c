@@ -130,8 +130,52 @@ gp_module_manager_get_modules (GpModuleManager *self)
 }
 
 GpModule *
-gp_module_manager_get_module (GpModuleManager *self,
-                              const char      *id)
+gp_module_manager_get_module (GpModuleManager  *self,
+                              const char       *id,
+                              GError          **error)
 {
-  return g_hash_table_lookup (self->modules, id);
+  GpModule *module;
+
+  module = g_hash_table_lookup (self->modules, id);
+
+  if (module == NULL)
+    {
+      g_set_error (error,
+                   G_IO_ERROR,
+                   G_IO_ERROR_NOT_FOUND,
+                   "Module “%s” does not exist",
+                   id);
+
+      return NULL;
+    }
+
+  return module;
+}
+
+gboolean
+gp_module_manager_handle_action (GpModuleManager *self,
+                                 GpActionFlags    action,
+                                 uint32_t         time)
+{
+  GHashTableIter iter;
+  gpointer value;
+
+  g_hash_table_iter_init (&iter, self->modules);
+  while (g_hash_table_iter_next (&iter, NULL, &value))
+    {
+      GpModule *module;
+      GpActionFlags actions;
+
+      module = GP_MODULE (value);
+
+      actions = gp_module_get_actions (module);
+
+      if ((actions & action) != action)
+        continue;
+
+      if (gp_module_handle_action (module, action, time))
+        return TRUE;
+    }
+
+  return FALSE;
 }

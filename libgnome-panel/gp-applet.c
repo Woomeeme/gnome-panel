@@ -51,12 +51,6 @@
 #include "gp-module-private.h"
 
 typedef struct
- {
-  gint  *size_hints;
-  guint  n_elements;
-} GpSizeHints;
-
-typedef struct
 {
   GtkBuilder         *builder;
   GSimpleActionGroup *action_group;
@@ -65,7 +59,6 @@ typedef struct
 
   gchar              *id;
   gchar              *settings_path;
-  GVariant           *initial_settings;
   gchar              *gettext_domain;
   gboolean            locked_down;
   GpLockdownFlags     lockdowns;
@@ -73,11 +66,6 @@ typedef struct
   GtkPositionType     position;
 
   GpAppletFlags       flags;
-  GpSizeHints        *size_hints;
-
-  guint               size_hints_idle;
-
-  GSettings          *general_settings;
 
   gboolean            enable_tooltips;
 
@@ -85,8 +73,6 @@ typedef struct
 
   guint               panel_icon_size;
   guint               menu_icon_size;
-
-  guint               icon_resize_id;
 
   GtkWidget          *about_dialog;
 } GpAppletPrivate;
@@ -99,7 +85,6 @@ enum
 
   PROP_ID,
   PROP_SETTINGS_PATH,
-  PROP_INITIAL_SETTINGS,
   PROP_GETTEXT_DOMAIN,
   PROP_LOCKED_DOWN,
   PROP_LOCKDOWNS,
@@ -121,210 +106,45 @@ static GParamSpec *properties[LAST_PROP] = { NULL };
 enum
 {
   PLACEMENT_CHANGED,
+  ORIENTATION_CHANGED,
+  POSITION_CHANGED,
 
   FLAGS_CHANGED,
-  SIZE_HINTS_CHANGED,
 
   LAST_SIGNAL
 };
 
 static guint signals[LAST_SIGNAL] = { 0 };
 
-G_DEFINE_TYPE_WITH_PRIVATE (GpApplet, gp_applet, GTK_TYPE_EVENT_BOX)
+static void initable_iface_init (GInitableIface *iface);
 
-static void
-update_enable_tooltips (GpApplet *applet)
-{
-  GpAppletPrivate *priv;
-  gboolean enable_tooltips;
-
-  priv = gp_applet_get_instance_private (applet);
-  enable_tooltips = g_settings_get_boolean (priv->general_settings,
-                                            "enable-tooltips");
-
-  gp_applet_set_enable_tooltips (applet, enable_tooltips);
-}
-
-static void
-update_prefer_symbolic_icons (GpApplet *applet)
-{
-  GpAppletPrivate *priv;
-  gboolean prefer_symbolic_icons;
-
-  priv = gp_applet_get_instance_private (applet);
-  prefer_symbolic_icons = g_settings_get_boolean (priv->general_settings,
-                                                  "prefer-symbolic-icons");
-
-  gp_applet_set_prefer_symbolic_icons (applet, prefer_symbolic_icons);
-}
-
-static void
-update_menu_icon_size (GpApplet *applet)
-{
-  GpAppletPrivate *priv;
-  guint menu_icon_size;
-
-  priv = gp_applet_get_instance_private (applet);
-  menu_icon_size = g_settings_get_enum (priv->general_settings,
-                                        "menu-icon-size");
-
-  gp_applet_set_menu_icon_size (applet, menu_icon_size);
-}
-
-static void
-update_panel_icon_size (GpApplet *applet)
-{
-  GpAppletPrivate *priv;
-  guint panel_max_icon_size;
-  GtkAllocation allocation;
-  guint panel_size;
-  guint spacing;
-  guint panel_icon_size;
-
-  priv = gp_applet_get_instance_private (applet);
-  panel_max_icon_size = g_settings_get_enum (priv->general_settings,
-                                             "panel-max-icon-size");
-
-  gtk_widget_get_allocation (GTK_WIDGET (applet), &allocation);
-
-  if (priv->orientation == GTK_ORIENTATION_HORIZONTAL)
-    panel_size = allocation.height;
-  else if (priv->orientation == GTK_ORIENTATION_VERTICAL)
-    panel_size = allocation.width;
-  else
-    g_assert_not_reached ();
-
-  spacing = 4;
-
-  if (panel_size <= panel_max_icon_size + spacing)
-    {
-      if (panel_size < 22 + spacing)
-        panel_icon_size = 16;
-      else if (panel_size < 24 + spacing)
-        panel_icon_size = 22;
-      else if (panel_size < 32 + spacing)
-        panel_icon_size = 24;
-      else if (panel_size < 48 + spacing)
-        panel_icon_size = 32;
-      else if (panel_size < 64 + spacing)
-        panel_icon_size = 48;
-      else
-        panel_icon_size = 64;
-    }
-  else
-    {
-      panel_icon_size = panel_max_icon_size;
-    }
-
-  gp_applet_set_panel_icon_size (applet, panel_icon_size);
-}
-
-static void
-general_settings_changed_cb (GSettings   *settings,
-                             const gchar *key,
-                             GpApplet    *applet)
-{
-  if (key == NULL || g_strcmp0 (key, "enable-tooltips") == 0)
-    update_enable_tooltips (applet);
-
-  if (key == NULL || g_strcmp0 (key, "prefer-symbolic-icons") == 0)
-    update_prefer_symbolic_icons (applet);
-
-  if (key == NULL || g_strcmp0 (key, "menu-icon-size") == 0)
-    update_menu_icon_size (applet);
-
-  if (key == NULL || g_strcmp0 (key, "panel-max-icon-size") == 0)
-    update_panel_icon_size (applet);
-}
+G_DEFINE_TYPE_WITH_CODE (GpApplet, gp_applet, GTK_TYPE_EVENT_BOX,
+                         G_ADD_PRIVATE (GpApplet)
+                         G_IMPLEMENT_INTERFACE (G_TYPE_INITABLE,
+                                                initable_iface_init))
 
 static gboolean
-icon_resize_cb (gpointer user_data)
+initable_init (GInitable     *initable,
+               GCancellable  *cancellable,
+               GError       **error)
 {
   GpApplet *self;
-  GpAppletPrivate *priv;
 
-  self = GP_APPLET (user_data);
-  priv = gp_applet_get_instance_private (self);
+  self = GP_APPLET (initable);
 
-  update_panel_icon_size (self);
-  priv->icon_resize_id = 0;
-
-  return G_SOURCE_REMOVE;
-}
-
-static gboolean
-emit_size_hints_changed_cb (gpointer user_data)
-{
-  GpApplet *applet;
-  GpAppletPrivate *priv;
-
-  applet = GP_APPLET (user_data);
-  priv = gp_applet_get_instance_private (applet);
-
-  priv->size_hints_idle = 0;
-  g_signal_emit (applet, signals[SIZE_HINTS_CHANGED], 0);
-
-  return G_SOURCE_REMOVE;
+  return GP_APPLET_GET_CLASS (self)->initable_init (self, error);
 }
 
 static void
-emit_size_hints_changed (GpApplet *applet)
+initable_iface_init (GInitableIface *iface)
 {
-  GpAppletPrivate *priv;
-  const gchar *name;
-
-  priv = gp_applet_get_instance_private (applet);
-  if (priv->size_hints_idle != 0)
-    return;
-
-  priv->size_hints_idle = g_idle_add (emit_size_hints_changed_cb, applet);
-
-  name = "[libgnome-panel] emit_size_hints_changed_cb";
-  g_source_set_name_by_id (priv->size_hints_idle, name);
-}
-
-static void
-gp_size_hints_free (gpointer data)
-{
-  GpSizeHints *size_hints;
-
-  size_hints = (GpSizeHints *) data;
-
-  g_free (size_hints->size_hints);
-  g_free (size_hints);
-}
-
-static gboolean
-size_hints_changed (GpAppletPrivate *priv,
-                    const gint      *size_hints,
-                    guint            n_elements,
-                    gint             base_size)
-{
-  guint i;
-
-  if (priv->size_hints == NULL && size_hints == NULL)
-    return FALSE;
-
-  if (priv->size_hints == NULL || size_hints == NULL)
-    return TRUE;
-
-  if (priv->size_hints->n_elements != n_elements)
-    return TRUE;
-
-  for (i = 0; i < n_elements; i++)
-    {
-      if (priv->size_hints->size_hints[i] != size_hints[i] + base_size)
-        return TRUE;
-    }
-
-  return FALSE;
+  iface->init = initable_init;
 }
 
 static void
 gp_applet_constructed (GObject *object)
 {
   GpApplet *applet;
-  GpAppletClass *applet_class;
   GpAppletPrivate *priv;
   GActionGroup *group;
   GtkStyleContext *context;
@@ -332,12 +152,7 @@ gp_applet_constructed (GObject *object)
   G_OBJECT_CLASS (gp_applet_parent_class)->constructed (object);
 
   applet = GP_APPLET (object);
-  applet_class = GP_APPLET_GET_CLASS (applet);
   priv = gp_applet_get_instance_private (applet);
-
-  if (applet_class->initial_setup != NULL && priv->initial_settings != NULL)
-    applet_class->initial_setup (applet, priv->initial_settings);
-  g_clear_pointer (&priv->initial_settings, g_variant_unref);
 
   gtk_builder_set_translation_domain (priv->builder, priv->gettext_domain);
 
@@ -362,21 +177,6 @@ gp_applet_dispose (GObject *object)
 
   g_clear_object (&priv->module);
 
-  if (priv->size_hints_idle != 0)
-    {
-      g_source_remove (priv->size_hints_idle);
-      priv->size_hints_idle = 0;
-    }
-
-  if (priv->icon_resize_id != 0)
-    {
-      g_source_remove (priv->icon_resize_id);
-      priv->icon_resize_id = 0;
-    }
-
-  g_clear_pointer (&priv->initial_settings, g_variant_unref);
-  g_clear_object (&priv->general_settings);
-
   g_clear_pointer (&priv->about_dialog, gtk_widget_destroy);
 
   G_OBJECT_CLASS (gp_applet_parent_class)->dispose (object);
@@ -394,7 +194,6 @@ gp_applet_finalize (GObject *object)
   g_clear_pointer (&priv->id, g_free);
   g_clear_pointer (&priv->settings_path, g_free);
   g_clear_pointer (&priv->gettext_domain, g_free);
-  g_clear_pointer (&priv->size_hints, gp_size_hints_free);
 
   G_OBJECT_CLASS (gp_applet_parent_class)->finalize (object);
 }
@@ -422,10 +221,6 @@ gp_applet_get_property (GObject    *object,
 
       case PROP_SETTINGS_PATH:
         g_value_set_string (value, priv->settings_path);
-        break;
-
-      case PROP_INITIAL_SETTINGS:
-        g_value_set_variant (value, priv->initial_settings);
         break;
 
       case PROP_GETTEXT_DOMAIN:
@@ -497,11 +292,6 @@ gp_applet_set_property (GObject      *object,
       case PROP_SETTINGS_PATH:
         g_assert (priv->settings_path == NULL);
         priv->settings_path = g_value_dup_string (value);
-        break;
-
-      case PROP_INITIAL_SETTINGS:
-        g_assert (priv->initial_settings == NULL);
-        priv->initial_settings = g_value_dup_variant (value);
         break;
 
       case PROP_GETTEXT_DOMAIN:
@@ -617,33 +407,19 @@ gp_applet_get_request_mode (GtkWidget *widget)
   return GTK_SIZE_REQUEST_WIDTH_FOR_HEIGHT;
 }
 
-static void
-gp_applet_size_allocate (GtkWidget     *widget,
-                         GtkAllocation *allocation)
+static gboolean
+gp_applet_initial_setup (GpApplet  *self,
+                         GVariant  *initial_settings,
+                         GError   **error)
 {
-  GpApplet *self;
-  GpAppletPrivate *priv;
-  GtkAllocation old_allocation;
+  return TRUE;
+}
 
-  self = GP_APPLET (widget);
-  priv = gp_applet_get_instance_private (self);
-
-  gtk_widget_get_allocation (widget, &old_allocation);
-
-  GTK_WIDGET_CLASS (gp_applet_parent_class)->size_allocate (widget, allocation);
-
-  if ((priv->orientation == GTK_ORIENTATION_HORIZONTAL &&
-       old_allocation.height != allocation->height) ||
-      (priv->orientation == GTK_ORIENTATION_VERTICAL &&
-       old_allocation.width != allocation->width))
-    {
-      if (priv->icon_resize_id == 0)
-        {
-          priv->icon_resize_id = g_idle_add (icon_resize_cb, self);
-          g_source_set_name_by_id (priv->icon_resize_id,
-                                   "[libgnome-panel] icon_resize_cb");
-        }
-    }
+static gboolean
+gp_applet_initable_init (GpApplet  *self,
+                         GError   **error)
+{
+  return TRUE;
 }
 
 static void
@@ -682,17 +458,6 @@ install_properties (GObjectClass *object_class)
                          NULL,
                          G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE |
                          G_PARAM_STATIC_STRINGS);
-
-  /**
-   * GpApplet:initial-settings:
-   *
-   * The GVariant with initial settings.
-   */
-  properties[PROP_INITIAL_SETTINGS] =
-    g_param_spec_variant ("initial-settings", "Initial Settings", "Initial Settings",
-                          G_VARIANT_TYPE ("a{sv}"), NULL,
-                          G_PARAM_CONSTRUCT_ONLY | G_PARAM_WRITABLE |
-                          G_PARAM_STATIC_STRINGS);
 
   /**
    * GpApplet:gettext-domain:
@@ -797,7 +562,7 @@ install_properties (GObjectClass *object_class)
    */
   properties[PROP_MENU_ICON_SIZE] =
     g_param_spec_uint ("menu-icon-size", "Menu Icon Size", "Menu Icon Size",
-                       16, 24, 16,
+                       16, 48, 16,
                        G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY |
                        G_PARAM_STATIC_STRINGS);
 
@@ -826,6 +591,36 @@ install_signals (void)
                   GTK_TYPE_ORIENTATION, GTK_TYPE_POSITION_TYPE);
 
   /**
+   * GpApplet::orientation-changed:
+   * @applet: the object on which the signal is emitted
+   *
+   * Signal is emitted when the orientation of applet has changed.
+   */
+  signals[ORIENTATION_CHANGED] =
+    g_signal_new ("orientation-changed",
+                  GP_TYPE_APPLET,
+                  G_SIGNAL_RUN_LAST,
+                  G_STRUCT_OFFSET (GpAppletClass, orientation_changed),
+                  NULL, NULL, NULL,
+                  G_TYPE_NONE,
+                  0);
+
+  /**
+   * GpApplet::position-changed:
+   * @applet: the object on which the signal is emitted
+   *
+   * Signal is emitted when the position of applet has changed.
+   */
+  signals[POSITION_CHANGED] =
+    g_signal_new ("position-changed",
+                  GP_TYPE_APPLET,
+                  G_SIGNAL_RUN_LAST,
+                  G_STRUCT_OFFSET (GpAppletClass, position_changed),
+                  NULL, NULL, NULL,
+                  G_TYPE_NONE,
+                  0);
+
+  /**
    * GpApplet::flags-changed:
    * @applet: the object on which the signal is emitted
    *
@@ -833,16 +628,6 @@ install_signals (void)
    */
   signals[FLAGS_CHANGED] =
     g_signal_new ("flags-changed", GP_TYPE_APPLET, G_SIGNAL_RUN_LAST,
-                  0, NULL, NULL, NULL, G_TYPE_NONE, 0);
-
-  /**
-   * GpApplet::size-hints-changed:
-   * @applet: the object on which the signal is emitted
-   *
-   * Signal is emitted when size hints has changed.
-   */
-  signals[SIZE_HINTS_CHANGED] =
-    g_signal_new ("size-hints-changed", GP_TYPE_APPLET, G_SIGNAL_RUN_LAST,
                   0, NULL, NULL, NULL, G_TYPE_NONE, 0);
 }
 
@@ -864,7 +649,9 @@ gp_applet_class_init (GpAppletClass *applet_class)
   widget_class->draw = gp_applet_draw;
   widget_class->focus = gp_applet_focus;
   widget_class->get_request_mode = gp_applet_get_request_mode;
-  widget_class->size_allocate = gp_applet_size_allocate;
+
+  applet_class->initial_setup = gp_applet_initial_setup;
+  applet_class->initable_init = gp_applet_initable_init;
 
   install_properties (object_class);
   install_signals ();
@@ -881,13 +668,6 @@ gp_applet_init (GpApplet *applet)
 
   priv->builder = gtk_builder_new ();
   priv->action_group = g_simple_action_group_new ();
-
-  priv->general_settings = g_settings_new ("org.gnome.gnome-panel.general");
-
-  g_signal_connect (priv->general_settings, "changed",
-                    G_CALLBACK (general_settings_changed_cb), applet);
-
-  general_settings_changed_cb (priv->general_settings, NULL, applet);
 }
 
 /**
@@ -997,6 +777,7 @@ gp_applet_set_orientation (GpApplet       *applet,
   priv->orientation = orientation;
 
   g_object_notify_by_pspec (G_OBJECT (applet), properties[PROP_ORIENTATION]);
+  g_signal_emit (applet, signals[ORIENTATION_CHANGED], 0);
 }
 
 /**
@@ -1035,6 +816,7 @@ gp_applet_set_position (GpApplet        *applet,
   priv->position = position;
 
   g_object_notify_by_pspec (G_OBJECT (applet), properties[PROP_POSITION]);
+  g_signal_emit (applet, signals[POSITION_CHANGED], 0);
 }
 
 /**
@@ -1078,112 +860,6 @@ gp_applet_set_flags (GpApplet      *applet,
   priv->flags = flags;
 
   g_signal_emit (applet, signals[FLAGS_CHANGED], 0);
-}
-
-/**
- * gp_applet_get_size_hints:
- * @applet: a #GpApplet
- * @n_elements: (out): return location for the length of the returned array
- *
- * Returns array with size hints.
- *
- * Returns: (transfer full) (array length=n_elements): a newly allocated
- *     array, or %NULL.
- */
-gint *
-gp_applet_get_size_hints (GpApplet *applet,
-                          guint    *n_elements)
-{
-  GpAppletPrivate *priv;
-  gint *size_hints;
-  guint i;
-
-  g_return_val_if_fail (GP_IS_APPLET (applet), NULL);
-  g_return_val_if_fail (n_elements != NULL, NULL);
-
-  priv = gp_applet_get_instance_private (applet);
-
-  if (!priv->size_hints || priv->size_hints->n_elements == 0)
-    {
-      *n_elements = 0;
-      return NULL;
-    }
-
-  *n_elements = priv->size_hints->n_elements;
-  size_hints = g_new0 (gint, priv->size_hints->n_elements);
-
-  for (i = 0; i < priv->size_hints->n_elements; i++)
-    size_hints[i] = priv->size_hints->size_hints[i];
-
-  return size_hints;
-}
-
-/**
- * gp_applet_set_size_hints:
- * @applet: a #GpApplet
- * @size_hints: (allow-none): array of sizes or %NULL
- * @n_elements: length of @size_hints
- * @base_size: base size of the applet
- *
- * Give hints to the panel about sizes @applet is comfortable with. This
- * is generally useful for applets that can take a lot of space, in case
- * the panel gets full and needs to restrict the size of some applets.
- *
- * @size_hints should have an even number of sizes. It is an array of
- * (max, min) pairs where min(i) > max(i + 1).
- *
- * @base_size will be added to all sizes in @size_hints, and is therefore
- * a way to guarantee a minimum size to @applet.
- *
- * The panel will try to allocate a size that is acceptable to @applet,
- * i.e. in one of the (@base_size + max, @base_size + min) ranges.
- *
- * %GP_APPLET_FLAGS_EXPAND_MAJOR must be set for @applet to use size hints.
- */
-void
-gp_applet_set_size_hints (GpApplet   *applet,
-                          const gint *size_hints,
-                          guint       n_elements,
-                          gint        base_size)
-{
-  GpAppletPrivate *priv;
-  guint i;
-
-  g_return_if_fail (GP_IS_APPLET (applet));
-  priv = gp_applet_get_instance_private (applet);
-
-  if (!size_hints_changed (priv, size_hints, n_elements, base_size))
-    return;
-
-  if (!size_hints || n_elements == 0)
-    {
-      g_clear_pointer (&priv->size_hints, gp_size_hints_free);
-      emit_size_hints_changed (applet);
-
-      return;
-    }
-
-  if (!priv->size_hints)
-    {
-      priv->size_hints = g_new0 (GpSizeHints, 1);
-      priv->size_hints->size_hints = g_new0 (gint, n_elements);
-      priv->size_hints->n_elements = n_elements;
-    }
-  else
-    {
-      if (priv->size_hints->n_elements < n_elements)
-        {
-          g_free (priv->size_hints->size_hints);
-          priv->size_hints->size_hints = g_new0 (gint, n_elements);
-        }
-
-      priv->size_hints->n_elements = n_elements;
-    }
-
-  for (i = 0; i < n_elements; i++)
-    priv->size_hints->size_hints[i] = size_hints[i] + base_size;
-
-  emit_size_hints_changed (applet);
 }
 
 /**

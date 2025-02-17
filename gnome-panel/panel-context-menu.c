@@ -38,22 +38,45 @@
 #include "panel-util.h"
 #include "panel.h"
 #include "gp-add-applet-window.h"
+#include "gp-applet-manager.h"
 #include "gp-properties-dialog.h"
-#include "panel-applets-manager.h"
 #include "panel-layout.h"
 #include "panel-lockdown.h"
 #include "panel-icon-names.h"
 
 static void
-panel_context_menu_create_new_panel (GtkWidget *menuitem)
+panel_context_menu_create_new_panel (GtkWidget     *menuitem,
+                                     PanelToplevel *toplevel)
 {
-	panel_layout_toplevel_create (gtk_widget_get_screen (menuitem));
+  GpApplication *application;
+  PanelLayout *layout;
+
+  application = panel_toplevel_get_application (toplevel);
+  layout = gp_application_get_layout (application);
+
+  panel_layout_toplevel_create (layout, gtk_widget_get_screen (menuitem));
+}
+
+static gboolean
+is_last_toplevel (PanelToplevel *toplevel)
+{
+  GpApplication *application;
+  GList *toplevels;
+  gboolean is_last;
+
+  application = panel_toplevel_get_application (toplevel);
+  toplevels = gp_application_get_toplevels (application);
+
+  is_last = toplevels->next == NULL ? TRUE : FALSE;
+  g_list_free (toplevels);
+
+  return is_last;
 }
 
 static void
 panel_context_menu_delete_panel (PanelToplevel *toplevel)
 {
-	if (panel_toplevel_is_last (toplevel)) {
+	if (is_last_toplevel (toplevel)) {
 		panel_error_dialog (GTK_WINDOW (toplevel),
 				    gtk_window_get_screen (GTK_WINDOW (toplevel)),
 				    "cannot_delete_last_panel", TRUE,
@@ -69,14 +92,21 @@ static void
 panel_context_menu_setup_delete_panel_item (GtkWidget     *menuitem,
                                             PanelToplevel *toplevel)
 {
+	GpApplication *application;
+	PanelLockdown *lockdown;
+	PanelLayout *layout;
 	gboolean     sensitive;
 
 	g_assert (PANEL_IS_TOPLEVEL (toplevel));
 
+	application = panel_toplevel_get_application (toplevel);
+	lockdown = gp_application_get_lockdown (application);
+	layout = gp_application_get_layout (application);
+
 	sensitive =
-		!panel_toplevel_is_last (toplevel) &&
-		!panel_lockdown_get_panels_locked_down_s () &&
-		panel_layout_is_writable ();
+		!is_last_toplevel (toplevel) &&
+		!panel_lockdown_get_panels_locked_down (lockdown) &&
+		panel_layout_is_writable (layout);
 
 	gtk_widget_set_sensitive (menuitem, sensitive);
 }
@@ -99,10 +129,13 @@ present_properties_dialog (GtkWidget     *widget,
 
   if (dialog == NULL)
     {
+      GpApplication *application;
       const gchar *toplevel_id;
 
+      application = panel_toplevel_get_application (toplevel);
       toplevel_id = panel_toplevel_get_id (toplevel);
-      dialog = gp_properties_dialog_new (toplevel_id);
+
+      dialog = gp_properties_dialog_new (application, toplevel_id);
 
       g_signal_connect (dialog, "destroy",
                         G_CALLBACK (dialog_destroy_cb),
@@ -148,9 +181,12 @@ add_to_panel_activate_cb (GtkMenuItem   *menuitem,
 
   if (dialog == NULL)
     {
+      GpApplication *application;
       GpModuleManager *manager;
 
-      manager = panel_applets_manager_get_module_manager ();
+      application = panel_toplevel_get_application (toplevel);
+      manager = gp_application_get_module_manager (application);
+
       dialog = gp_add_applet_window_new (manager, toplevel);
 
       g_signal_connect (dialog, "destroy",
@@ -172,7 +208,12 @@ static void
 panel_context_menu_build_edition (PanelWidget *panel_widget,
 				  GtkWidget   *menu)
 {
+	GpApplication *application;
+	PanelLayout *layout;
 	GtkWidget *menuitem;
+
+	application = panel_toplevel_get_application (panel_widget->toplevel);
+	layout = gp_application_get_layout (application);
 
 	menuitem = gtk_menu_item_new_with_mnemonic (_("_Add to Panel..."));
 	gtk_widget_show (menuitem);
@@ -182,7 +223,7 @@ panel_context_menu_build_edition (PanelWidget *panel_widget,
 	                  G_CALLBACK (add_to_panel_activate_cb),
 	                  panel_widget->toplevel);
 
-	if (!panel_layout_is_writable ())
+	if (!panel_layout_is_writable (layout))
 		gtk_widget_set_sensitive (menuitem, FALSE);
 
 	menuitem = gtk_menu_item_new_with_mnemonic (_("_Properties"));
@@ -209,9 +250,9 @@ panel_context_menu_build_edition (PanelWidget *panel_widget,
 	gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
 	g_signal_connect (menuitem, "activate",
 			  G_CALLBACK (panel_context_menu_create_new_panel), 
-			  NULL);
+			  panel_widget->toplevel);
 	gtk_widget_set_sensitive (menuitem, 
-				  panel_layout_is_writable ());
+				  panel_layout_is_writable (layout));
 }
 
 static GtkWidget *
@@ -257,9 +298,14 @@ create_empty_menu (void)
 GtkWidget *
 panel_context_menu_create (PanelWidget *panel)
 {
+	GpApplication *application;
+	PanelLockdown *lockdown;
 	GtkWidget *retval;
 
-	if (panel_lockdown_get_panels_locked_down_s ())
+	application = panel_toplevel_get_application (panel->toplevel);
+	lockdown = gp_application_get_lockdown (application);
+
+	if (panel_lockdown_get_panels_locked_down (lockdown))
 		return NULL;
 
 	retval = create_empty_menu ();

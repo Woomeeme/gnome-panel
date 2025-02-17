@@ -221,14 +221,24 @@ append_places_item (GpMenuButtonApplet *menu_button,
 }
 
 static void
+append_lock_logout (GtkMenu                   *menu,
+                    GpMenuButtonAppletPrivate *priv)
+{
+  gp_lock_logout_append_to_menu (priv->lock_logout, menu);
+}
+
+static void
 append_user_item (GpMenuButtonApplet *menu_button,
                   GtkMenu            *menu)
 {
+  GpMenuButtonAppletPrivate *priv;
   guint icon_size;
   GtkWidget *icon;
   gchar *user_name;
   GtkWidget *item;
   GtkWidget *user_menu;
+
+  priv = gp_menu_button_applet_get_instance_private (menu_button);
 
   icon_size = gp_applet_get_menu_icon_size (GP_APPLET (menu_button));
   icon = gtk_image_new_from_icon_name ("computer", GTK_ICON_SIZE_MENU);
@@ -266,21 +276,19 @@ append_user_item (GpMenuButtonApplet *menu_button,
   g_object_bind_property (user_menu, "empty", item, "visible",
                           G_BINDING_DEFAULT | G_BINDING_SYNC_CREATE |
                           G_BINDING_INVERT_BOOLEAN);
+
+  gp_user_menu_set_append_func (GP_USER_MENU (user_menu),
+                                (GpAppendMenuItemsFunc) append_lock_logout,
+                                priv);
 }
 
 static void
 append_menu_items_cb (GtkMenu            *menu,
                       GpMenuButtonApplet *menu_button)
 {
-  GpMenuButtonAppletPrivate *priv;
-
-  priv = gp_menu_button_applet_get_instance_private (menu_button);
-
   append_separator_if_needed (menu);
   append_places_item (menu_button, menu);
   append_user_item (menu_button, menu);
-
-  gp_lock_logout_append_to_menu (priv->lock_logout, menu);
 }
 
 static gboolean
@@ -418,7 +426,7 @@ settings_changed_cb (GSettings          *settings,
       gboolean show_arrow;
 
       show_arrow = g_settings_get_boolean (priv->settings, "show-arrow");
-      gtk_widget_set_visible (priv->image, show_arrow);
+      gtk_widget_set_visible (priv->arrow, show_arrow);
     }
   else if (g_strcmp0 (key, "tooltip") == 0)
     {
@@ -635,13 +643,6 @@ gp_menu_button_applet_setup (GpMenuButtonApplet *menu_button)
 }
 
 static void
-gp_menu_button_applet_constructed (GObject *object)
-{
-  G_OBJECT_CLASS (gp_menu_button_applet_parent_class)->constructed (object);
-  gp_menu_button_applet_setup (GP_MENU_BUTTON_APPLET (object));
-}
-
-static void
 gp_menu_button_applet_dispose (GObject *object)
 {
   GpMenuButtonApplet *menu_button;
@@ -657,12 +658,15 @@ gp_menu_button_applet_dispose (GObject *object)
   G_OBJECT_CLASS (gp_menu_button_applet_parent_class)->dispose (object);
 }
 
-static void
-gp_menu_button_applet_initial_setup (GpApplet *applet,
-                                     GVariant *initial_settings)
+static gboolean
+gp_menu_button_applet_initial_setup (GpApplet  *applet,
+                                     GVariant  *initial_settings,
+                                     GError   **error)
 {
   GSettings *settings;
   const gchar *menu_path;
+
+  g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
 
   settings = gp_applet_settings_new (applet, MENU_BUTTON_SCHEMA);
 
@@ -671,6 +675,17 @@ gp_menu_button_applet_initial_setup (GpApplet *applet,
     g_settings_set_string (settings, "menu-path", menu_path);
 
   g_object_unref (settings);
+
+  return TRUE;
+}
+
+static gboolean
+gp_menu_button_applet_initable_init (GpApplet  *applet,
+                                     GError   **error)
+{
+  gp_menu_button_applet_setup (GP_MENU_BUTTON_APPLET (applet));
+
+  return TRUE;
 }
 
 static void
@@ -694,10 +709,10 @@ gp_menu_button_applet_class_init (GpMenuButtonAppletClass *menu_button_class)
   object_class = G_OBJECT_CLASS (menu_button_class);
   applet_class = GP_APPLET_CLASS (menu_button_class);
 
-  object_class->constructed = gp_menu_button_applet_constructed;
   object_class->dispose = gp_menu_button_applet_dispose;
 
   applet_class->initial_setup = gp_menu_button_applet_initial_setup;
+  applet_class->initable_init = gp_menu_button_applet_initable_init;
   applet_class->placement_changed = gp_menu_button_applet_placement_changed;
 }
 

@@ -53,11 +53,11 @@ struct _PanelWidget
 
 	GList          *applet_list;
 
-	GSList         *open_dialogs;	
-
 	int             size;
 	GtkOrientation  orient;
 	int             sz;
+
+	guint           icon_resize_id;
 
 	AppletData     *currently_dragged_applet;
 	guint           dragged_state;
@@ -149,10 +149,9 @@ void     panel_widget_set_applet_expandable       (PanelWidget *panel,
 						   gboolean     major,
 						   gboolean     minor);
 
-void     panel_widget_register_open_dialog        (PanelWidget *panel,
-						   GtkWidget   *dialog);  
-
 GSList  *panel_widget_get_panels (void);
+
+guint panel_widget_get_icon_size (PanelWidget *self);
 
 G_END_DECLS
 

@@ -1475,6 +1475,14 @@ get_preferred_size (PanelWidget    *self,
 }
 
 static void
+set_panel_icon_size (AppletInfo *applet,
+                     gpointer    user_data)
+{
+  gp_applet_set_panel_icon_size (panel_applet_get_applet (applet),
+                                 *(guint *) user_data);
+}
+
+static void
 panel_widget_size_allocate (GtkWidget     *widget,
                             GtkAllocation *allocation)
 {
@@ -1622,40 +1630,16 @@ panel_widget_is_cursor(PanelWidget *panel, int overlap)
 }
 
 static void
-panel_widget_open_dialog_destroyed (PanelWidget *panel_widget,
-				    GtkWidget   *dialog)
-{
-	g_return_if_fail (panel_widget->open_dialogs != NULL);
-
-	panel_widget->open_dialogs = g_slist_remove (panel_widget->open_dialogs, dialog);
-}
-
-static void
-panel_widget_destroy_open_dialogs (PanelWidget *panel_widget)
-{
-	GSList *l, *list;
-
-	list = panel_widget->open_dialogs;
-	panel_widget->open_dialogs = NULL;
-
-	for (l = list; l; l = l->next) {
-		g_signal_handlers_disconnect_by_func (G_OBJECT (l->data),
-				G_CALLBACK (panel_widget_open_dialog_destroyed),
-				panel_widget);
-		gtk_widget_destroy (l->data);
-	}
-	g_slist_free (list);
-
-}
-
-static void
 panel_widget_dispose (GObject *obj)
 {
 	PanelWidget *panel = PANEL_WIDGET (obj);
 
 	panels = g_slist_remove (panels, panel);
 
-	panel_widget_destroy_open_dialogs (panel);
+	if (panel->icon_resize_id != 0) {
+		g_source_remove (panel->icon_resize_id);
+		panel->icon_resize_id = 0;
+	}
 
         G_OBJECT_CLASS (panel_widget_parent_class)->dispose (obj);
 }
@@ -1674,7 +1658,6 @@ panel_widget_init (PanelWidget *panel)
 	panel->size          = 0;
 	panel->applet_list   = NULL;
 	panel->drop_widget   = widget;
-	panel->open_dialogs  = NULL;
 
 	panels = g_slist_append (panels, panel);
 }
@@ -1931,6 +1914,8 @@ panel_widget_applet_move_to_cursor (PanelWidget *panel)
 	int movement;
 	GtkWidget *applet;
 	AppletData *ad;
+	GpApplication *application;
+	PanelLockdown *lockdown;
 
 	g_return_if_fail(PANEL_IS_WIDGET(panel));
 
@@ -1942,8 +1927,11 @@ panel_widget_applet_move_to_cursor (PanelWidget *panel)
 	applet = ad->applet;
 	g_assert(GTK_IS_WIDGET(applet));
 
+	application = panel_toplevel_get_application (panel->toplevel);
+	lockdown = gp_application_get_lockdown (application);
+
 	if(!panel_widget_is_cursor(panel,10) &&
-	   !panel_lockdown_get_panels_locked_down_s ()) {
+	   !panel_lockdown_get_panels_locked_down (lockdown)) {
 		GSList *list;
 
 		for(list=panels;
@@ -2069,6 +2057,8 @@ panel_widget_applet_button_press_event (GtkWidget      *widget,
 {
 	GtkWidget   *parent;
 	PanelWidget *panel;
+	GpApplication *application;
+	PanelLockdown *lockdown;
 	guint        modifiers;
 	guint32      event_time;
 
@@ -2087,12 +2077,14 @@ panel_widget_applet_button_press_event (GtkWidget      *widget,
 		return TRUE;
 	}
 
+	application = panel_toplevel_get_application (panel->toplevel);
+	lockdown = gp_application_get_lockdown (application);
 	modifiers = event->state & gtk_accelerator_get_default_mod_mask ();
 
 	/* Begin drag if the middle mouse button and modifier are pressed,
 	 * unless the panel is locked down or a grab is active (meaning a menu
 	 * is open) */
-	if (panel_lockdown_get_panels_locked_down_s () ||
+	if (panel_lockdown_get_panels_locked_down (lockdown) ||
 	    event->button != 2 ||
 	    modifiers != panel_bindings_get_mouse_button_modifier_keymask () ||
 	    gtk_grab_get_current() != NULL)
@@ -2482,6 +2474,22 @@ panel_widget_set_orientation (PanelWidget    *panel_widget,
 	gtk_widget_queue_resize (GTK_WIDGET (panel_widget));
 }
 
+static gboolean
+icon_resize_cb (gpointer user_data)
+{
+  PanelWidget *self;
+  guint icon_size;
+
+  self = PANEL_WIDGET (user_data);
+  self->icon_resize_id = 0;
+
+  icon_size = panel_widget_get_icon_size (self);
+
+  panel_applet_foreach (self, set_panel_icon_size, &icon_size);
+
+  return G_SOURCE_REMOVE;
+}
+
 void
 panel_widget_set_size (PanelWidget *panel_widget,
 		       int          size)
@@ -2492,6 +2500,12 @@ panel_widget_set_size (PanelWidget *panel_widget,
 		return;
 
 	panel_widget->sz = size;
+
+	if (panel_widget->icon_resize_id == 0) {
+		panel_widget->icon_resize_id = g_idle_add (icon_resize_cb, panel_widget);
+		g_source_set_name_by_id (panel_widget->icon_resize_id,
+		                         "[panel] icon_resize_cb");
+	}
 
 	queue_resize_on_all_applets (panel_widget);
 	gtk_widget_queue_resize (GTK_WIDGET (panel_widget));
@@ -2558,12 +2572,17 @@ static void
 panel_widget_tab_move (PanelWidget *panel,
                        gboolean     next)
 {
+	GpApplication *application;
+	PanelLockdown *lockdown;
 	PanelWidget *new_panel = NULL;
 	PanelWidget *previous_panel = NULL;
 	AppletData  *ad;
 	GSList      *l;
 
-	if (panel_lockdown_get_panels_locked_down_s ())
+	application = panel_toplevel_get_application (panel->toplevel);
+	lockdown = gp_application_get_lockdown (application);
+
+	if (panel_lockdown_get_panels_locked_down (lockdown))
 		return;
 
 	ad = panel->currently_dragged_applet;
@@ -2675,25 +2694,48 @@ panel_applet_is_in_drag (void)
 	return panel_applet_in_drag;
 }
 
-void 
-panel_widget_register_open_dialog (PanelWidget *panel,
-				   GtkWidget   *dialog)
-{
-	/* the window is for a panel, so it should be shown in the taskbar. See
-	 * HIG: An alert should not appear in the panel window list unless it
-	 * is, or may be, the only window shown by an application. */
-	gtk_window_set_skip_taskbar_hint (GTK_WINDOW (dialog), FALSE);
-
-	panel->open_dialogs = g_slist_append (panel->open_dialogs,
-					      dialog);
-	
-	g_signal_connect_object (dialog, "destroy",
-				 G_CALLBACK (panel_widget_open_dialog_destroyed),
-				 panel,
-				 G_CONNECT_SWAPPED);
-}
-
 GSList *panel_widget_get_panels (void)
 {
   return panels;
+}
+
+guint
+panel_widget_get_icon_size (PanelWidget *self)
+{
+  GpApplication *application;
+  GSettings *general_settings;
+  guint panel_max_icon_size;
+  guint spacing;
+  guint panel_size;
+  guint panel_icon_size;
+
+  application = panel_toplevel_get_application (self->toplevel);
+  general_settings = gp_application_get_general_settings (application);
+  panel_max_icon_size = g_settings_get_enum (general_settings,
+                                             "panel-max-icon-size");
+  spacing = g_settings_get_uint (general_settings, "panel-icon-spacing");
+  spacing *= 2;
+  panel_size = self->sz;
+
+  if (panel_size <= panel_max_icon_size + spacing)
+    {
+      if (panel_size < 22 + spacing)
+        panel_icon_size = 16;
+      else if (panel_size < 24 + spacing)
+        panel_icon_size = 22;
+      else if (panel_size < 32 + spacing)
+        panel_icon_size = 24;
+      else if (panel_size < 48 + spacing)
+        panel_icon_size = 32;
+      else if (panel_size < 64 + spacing)
+        panel_icon_size = 48;
+      else
+        panel_icon_size = 64;
+    }
+  else
+    {
+      panel_icon_size = panel_max_icon_size;
+    }
+
+  return panel_icon_size;
 }

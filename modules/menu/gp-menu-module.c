@@ -289,12 +289,12 @@ selection_changed_cb (GtkTreeSelection *selection,
           variant = g_variant_new_string (menu_path);
           g_free (menu_path);
 
-          gp_initital_setup_dialog_set_setting (data->dialog, "menu-path", variant);
+          gp_initial_setup_dialog_set_setting (data->dialog, "menu-path", variant);
           done = TRUE;
         }
     }
 
-  gp_initital_setup_dialog_set_done (data->dialog, done);
+  gp_initial_setup_dialog_set_done (data->dialog, done);
 }
 
 static void
@@ -353,8 +353,10 @@ menu_button_initial_setup_dialog (GpInitialSetupDialog *dialog)
   gtk_tree_view_set_model (GTK_TREE_VIEW (tree_view),
                            GTK_TREE_MODEL (data->store));
 
-  gp_initital_setup_dialog_add_content_widget (dialog, scrolled, data,
-                                               menu_button_data_free);
+  gp_initial_setup_dialog_add_content_widget (dialog,
+                                              scrolled,
+                                              data,
+                                              menu_button_data_free);
 }
 
 static GpAppletInfo *
@@ -475,6 +477,13 @@ append_places_item (StandaloneMenuData *data,
 }
 
 static void
+append_lock_logout (GtkMenu            *menu,
+                    StandaloneMenuData *data)
+{
+  gp_lock_logout_append_to_menu (data->lock_logout, menu);
+}
+
+static void
 append_user_item (StandaloneMenuData *data,
                   GtkMenu            *menu)
 {
@@ -507,6 +516,10 @@ append_user_item (StandaloneMenuData *data,
   g_object_bind_property (user_menu, "empty", item, "visible",
                           G_BINDING_DEFAULT | G_BINDING_SYNC_CREATE |
                           G_BINDING_INVERT_BOOLEAN);
+
+  gp_user_menu_set_append_func (GP_USER_MENU (user_menu),
+                                (GpAppendMenuItemsFunc) append_lock_logout,
+                                data);
 }
 
 static void
@@ -516,8 +529,6 @@ append_menu_items_cb (GtkMenu            *menu,
   append_separator_if_needed (GTK_MENU (menu));
   append_places_item (data, menu);
   append_user_item (data, menu);
-
-  gp_lock_logout_append_to_menu (data->lock_logout, GTK_MENU (menu));
 }
 
 static GtkWidget *
@@ -562,6 +573,79 @@ menu_get_standalone_menu (gboolean enable_tooltips,
   return menu;
 }
 
+static void
+menu_loaded_cb (GtkWidget *widget,
+                gpointer   user_data)
+{
+  GdkDisplay *display;
+  GdkScreen *screen;
+  GdkWindow *window;
+  GdkRectangle rect;
+  GdkSeat *seat;
+  GdkDevice *device;
+  GdkEvent *event;
+
+  display = gdk_display_get_default ();
+  screen = gdk_display_get_default_screen (display);
+  window = gdk_screen_get_root_window (screen);
+
+  rect.x = 0;
+  rect.y = 0;
+  rect.width = 1;
+  rect.height = 1;
+
+  seat = gdk_display_get_default_seat (display);
+  device = gdk_seat_get_pointer (seat);
+
+  gdk_window_get_device_position (window, device,
+                                  &rect.x, &rect.y,
+                                  NULL);
+
+  event = gdk_event_new (GDK_BUTTON_PRESS);
+  gdk_event_set_device (event, device);
+
+  gtk_menu_popup_at_rect (GTK_MENU (widget), window, &rect,
+                          GDK_GRAVITY_SOUTH_EAST,
+                          GDK_GRAVITY_NORTH_WEST,
+                          event);
+
+  gdk_event_free (event);
+}
+
+static gboolean
+main_menu_func (GpModule      *module,
+                GpActionFlags  action,
+                uint32_t       time)
+{
+  GSettings *general_settings;
+  GSettings *lockdown_settings;
+  gboolean enable_tooltips;
+  gboolean locked_down;
+  guint menu_icon_size;
+  GtkWidget *menu;
+
+  general_settings = g_settings_new ("org.gnome.gnome-panel.general");
+  lockdown_settings = g_settings_new ("org.gnome.gnome-panel.lockdown");
+
+  enable_tooltips = g_settings_get_boolean (general_settings, "enable-tooltips");
+  locked_down = g_settings_get_boolean (lockdown_settings, "locked-down");
+  menu_icon_size = g_settings_get_enum (general_settings, "menu-icon-size");
+
+  g_object_unref (lockdown_settings);
+  g_object_unref (general_settings);
+
+  menu = menu_get_standalone_menu (enable_tooltips,
+                                   locked_down,
+                                   menu_icon_size);
+
+  g_object_ref_sink (menu);
+
+  g_signal_connect (menu, "deactivate", G_CALLBACK (g_object_unref), NULL);
+  g_signal_connect (menu, "loaded", G_CALLBACK (menu_loaded_cb), NULL);
+
+  return TRUE;
+}
+
 void
 gp_module_load (GpModule *module)
 {
@@ -580,5 +664,7 @@ gp_module_load (GpModule *module)
   gp_module_set_get_applet_info (module, menu_get_applet_info);
   gp_module_set_compatibility (module, menu_get_applet_id_from_iid);
 
-  gp_module_set_standalone_menu (module, menu_get_standalone_menu);
+  gp_module_set_actions (module,
+                         GP_ACTION_MAIN_MENU,
+                         main_menu_func);
 }

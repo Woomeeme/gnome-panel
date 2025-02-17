@@ -20,7 +20,7 @@
 
 #include <glib/gi18n.h>
 
-#include "panel-applets-manager.h"
+#include "gp-applet-manager.h"
 #include "panel-layout.h"
 #include "panel-lockdown.h"
 
@@ -28,6 +28,7 @@ struct _GpAppletRow
 {
   GtkListBoxRow  parent;
 
+  PanelToplevel *toplevel;
   GpModule      *module;
   char          *applet_id;
 
@@ -42,6 +43,7 @@ enum
 {
   PROP_0,
 
+  PROP_TOPLEVEL,
   PROP_MODULE,
   PROP_APPLET_ID,
 
@@ -199,12 +201,23 @@ lockdown_changed_cb (PanelLockdown *lockdown,
                      gpointer       user_data)
 {
   GpAppletRow *self;
+  GpApplication *application;
+  GpAppletManager *applet_manager;
+  PanelLayout *layout;
 
   self = GP_APPLET_ROW (user_data);
 
-  if (!panel_layout_is_writable () ||
-      panel_lockdown_get_panels_locked_down_s () ||
-      panel_applets_manager_is_applet_disabled (self->iid, NULL))
+  application = panel_toplevel_get_application (self->toplevel);
+  applet_manager = gp_application_get_applet_manager (application);
+  lockdown = gp_application_get_lockdown (application);
+  layout = gp_application_get_layout (application);
+
+  if (!panel_layout_is_writable (layout) ||
+      panel_lockdown_get_panels_locked_down (lockdown) ||
+      gp_applet_manager_is_applet_disabled (applet_manager,
+                                            gp_module_get_id (self->module),
+                                            self->applet_id,
+                                            NULL))
     {
       gtk_widget_set_sensitive (GTK_WIDGET (self), FALSE);
       gtk_drag_source_unset (self->event_box);
@@ -237,6 +250,8 @@ setup_row (GpAppletRow *self)
   GtkWidget *menu_button;
   GtkWidget *title_label;
   GtkWidget *description_label;
+  GpApplication *application;
+  PanelLockdown *lockdown;
 
   info = gp_module_get_applet_info (self->module, self->applet_id, NULL);
   g_assert (info != NULL);
@@ -293,13 +308,16 @@ setup_row (GpAppletRow *self)
   gtk_label_set_xalign (GTK_LABEL (description_label), 0);
   gtk_widget_show (description_label);
 
-  panel_lockdown_on_notify (panel_lockdown_get (),
+  application = panel_toplevel_get_application (self->toplevel);
+  lockdown = gp_application_get_lockdown (application);
+
+  panel_lockdown_on_notify (lockdown,
                             NULL,
                             G_OBJECT (self),
                             lockdown_changed_cb,
                             self);
 
-  lockdown_changed_cb (panel_lockdown_get (), self);
+  lockdown_changed_cb (lockdown, self);
 }
 
 static void
@@ -331,6 +349,7 @@ gp_applet_row_finalize (GObject *object)
   self = GP_APPLET_ROW (object);
 
   g_clear_pointer (&self->applet_id, g_free);
+  g_clear_pointer (&self->iid, g_free);
 
   G_OBJECT_CLASS (gp_applet_row_parent_class)->finalize (object);
 }
@@ -347,6 +366,11 @@ gp_applet_row_set_property (GObject      *object,
 
   switch (property_id)
     {
+      case PROP_TOPLEVEL:
+        g_assert (self->toplevel == NULL);
+        self->toplevel = g_value_get_object (value);
+        break;
+
       case PROP_MODULE:
         g_assert (self->module == NULL);
         self->module = g_value_dup_object (value);
@@ -366,6 +390,15 @@ gp_applet_row_set_property (GObject      *object,
 static void
 install_properties (GObjectClass *object_class)
 {
+  row_properties[PROP_TOPLEVEL] =
+    g_param_spec_object ("toplevel",
+                         "toplevel",
+                         "toplevel",
+                         PANEL_TYPE_TOPLEVEL,
+                         G_PARAM_WRITABLE |
+                         G_PARAM_CONSTRUCT_ONLY |
+                         G_PARAM_STATIC_STRINGS);
+
   row_properties[PROP_MODULE] =
     g_param_spec_object ("module",
                          "module",
@@ -408,10 +441,12 @@ gp_applet_row_init (GpAppletRow *self)
 }
 
 GtkWidget *
-gp_applet_row_new (GpModule   *module,
-                   const char *applet_id)
+gp_applet_row_new (PanelToplevel *toplevel,
+                   GpModule      *module,
+                   const char    *applet_id)
 {
   return g_object_new (GP_TYPE_APPLET_ROW,
+                       "toplevel", toplevel,
                        "module", module,
                        "applet-id", applet_id,
                        NULL);
@@ -424,7 +459,13 @@ gp_applet_row_get_info (GpAppletRow *self)
 }
 
 const char *
-gp_applet_row_get_iid (GpAppletRow *self)
+gp_applet_row_get_module_id (GpAppletRow *self)
 {
-  return self->iid;
+  return gp_module_get_id (self->module);
+}
+
+const char *
+gp_applet_row_get_applet_id (GpAppletRow *self)
+{
+  return self->applet_id;
 }

@@ -19,6 +19,7 @@
 #define GP_INITIAL_SETUP_DIALOG_H
 
 #include <gtk/gtk.h>
+#include <libgnome-panel/gp-macros.h>
 
 G_BEGIN_DECLS
 
@@ -29,20 +30,24 @@ G_BEGIN_DECLS
  */
 typedef struct _GpInitialSetupDialog GpInitialSetupDialog;
 
-void      gp_initital_setup_dialog_add_content_widget (GpInitialSetupDialog *dialog,
-                                                       GtkWidget            *content,
-                                                       gpointer              user_data,
-                                                       GDestroyNotify        free_func);
+GP_EXPORT
+void      gp_initial_setup_dialog_add_content_widget (GpInitialSetupDialog *self,
+                                                      GtkWidget            *content,
+                                                      gpointer              user_data,
+                                                      GDestroyNotify        free_func);
 
-GVariant *gp_initital_setup_dialog_get_setting        (GpInitialSetupDialog *dialog,
-                                                       const char           *key);
+GP_EXPORT
+GVariant *gp_initial_setup_dialog_get_setting        (GpInitialSetupDialog *self,
+                                                      const char           *key);
 
-void      gp_initital_setup_dialog_set_setting        (GpInitialSetupDialog *dialog,
-                                                       const gchar          *key,
-                                                       GVariant             *value);
+GP_EXPORT
+void      gp_initial_setup_dialog_set_setting        (GpInitialSetupDialog *self,
+                                                      const char           *key,
+                                                      GVariant             *value);
 
-void      gp_initital_setup_dialog_set_done           (GpInitialSetupDialog *dialog,
-                                                       gboolean              done);
+GP_EXPORT
+void      gp_initial_setup_dialog_set_done           (GpInitialSetupDialog *self,
+                                                      gboolean              done);
 
 G_END_DECLS
 

@@ -43,17 +43,9 @@ struct _ClockFaceClass
         GtkWidgetClass parent_class;
 };
 
-typedef enum {
-        CLOCK_FACE_SMALL,
-        CLOCK_FACE_LARGE
-} ClockFaceSize;
-
 GType clock_face_get_type (void);
 
-GtkWidget *clock_face_new (ClockFaceSize size);
-GtkWidget *clock_face_new_with_location (ClockFaceSize size,
-					 ClockLocation *loc,
-					 GtkWidget *size_widget);
+GtkWidget *clock_face_new_with_location (ClockLocation *loc);
 gboolean clock_face_refresh (ClockFace *this);
 
 

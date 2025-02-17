@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE article PUBLIC "-//OASIS//DTD DocBook XML V4.1.2//EN" "http://www.oasis-open.org/docbook/xml/4.1.2/docbookx.dtd" [
+<!ENTITY legal SYSTEM "legal.xml">
+<!ENTITY appletversion "3.4.7.4ac19">
+<!ENTITY manrevision "2.5">
+<!ENTITY date "June 2009">
+<!ENTITY applet "Fish">
+]>
+<!-- 
+      (Do not remove this comment block.)
+  Maintained by the GNOME Documentation Project
+  http://developer.gnome.org/projects/gdp
+  Template version: 2.0 beta
+  Template last modified Mar 12, 2002
+  
+-->
+<article id="index" lang="ru">
+<!-- please do not change the id; for translations, change lang to -->
+<!-- appropriate code -->
+  <articleinfo> 
+	 <title>Руководство по апплету «Рыбка»</title>
+	 <copyright><year>2009</year> <holder>Пол Катлер</holder></copyright>	  
+	 <copyright><year>2002</year> <year>2003</year> <holder>Sun Microsystems</holder></copyright> 
+	 <copyright><year>2000</year> <holder>Телса Гвинн</holder></copyright>
+<!-- translators: uncomment this:
+
+  <copyright>
+   <year>2002</year>
+   <holder>ME-THE-TRANSLATOR (Latin translation)</holder>
+  </copyright>
+
+   -->
+
+	 <publisher role="maintainer"> 
+		<publishername>Проект документирования GNOME</publishername> 
+	 </publisher> 
+
+
+
+
+	 <authorgroup> 
+		<author><firstname>Пол</firstname> <surname>Катлер</surname> <affiliation> <orgname>Проект документирования GNOME</orgname> <address> <email>pcutler@gnome.org</email> </address> </affiliation></author>	 
+		<author><firstname>Sun</firstname> <surname>Команда документирования GNOME</surname> <affiliation> <orgname>Sun Microsystems</orgname> <address/> </affiliation></author> 
+		<author><firstname>Телса</firstname> <surname>Гвинн</surname> <affiliation> <orgname>Проект документирования GNOME</orgname> <address> <email>hobbit@aloss.ukuu.org.uk</email> </address> </affiliation></author>
+      <!-- This is appropriate place for other contributors: translators,
+           maintainers,  etc. Commented out by default.
+           <othercredit role="translator">
+	     <firstname>Latin</firstname> 
+	     <surname>Translator 1</surname> 
+	     <affiliation> 
+	       <orgname>Latin Translation Team</orgname> 
+	       <address> <email>translator@gnome.org</email> </address> 
+	     </affiliation>
+	     <contrib>Latin translation</contrib>
+           </othercredit>
+-->
+	 </authorgroup>
+	 
+	<releaseinfo revision="2.28" role="review">
+	</releaseinfo>
+
+	 <revhistory>
+		<revision><revnumber>Руководство по апплету «Рыбка», версия 2.5</revnumber> <date>Июнь 2009</date> <revdescription> 
+			 <para role="author">Команда Sun документирования GNOME</para> 
+			 <para role="publisher">Проект документирования GNOME</para> 
+		  </revdescription></revision>	 
+		<revision><revnumber>Руководство по апплету «Рыбка», версия 2.4</revnumber> <date>Июнь 2009</date> <revdescription> 
+			 <para role="author">Команда Sun документирования GNOME</para> 
+			 <para role="publisher">Проект документирования GNOME</para> 
+		  </revdescription></revision>
+		<revision><revnumber>Руководство по апплету «Рыбка», версия 2.2</revnumber> <date>Январь 2003</date> <revdescription> 
+			 <para role="author">Команда Sun документирования GNOME</para> 
+			 <para role="publisher">Проект документирования GNOME</para> 
+		  </revdescription></revision>
+		<revision><revnumber>Руководство по апплету «Рыбка», версия 2.1</revnumber> <date>Август 2002</date> <revdescription> 
+			 <para role="author">Команда Sun документирования GNOME</para> 
+			 <para role="publisher">Проект документирования GNOME</para> 
+		  </revdescription></revision> 
+		<revision><revnumber>Руководство по апплету «Рыбка», 2.0</revnumber> <date>Май 2002</date> <revdescription> 
+			 <para role="author">Команда Sun документирования GNOME</para> 
+			 <para role="publisher">Проект документирования GNOME</para> 
+		  </revdescription></revision> 
+		<revision><revnumber>Руководство по апплету «Рыбка»</revnumber> <date>2000</date> <revdescription> 
+			 <para role="author">Телса Гвинн <email>hobbit@aloss.ukuu.org.uk</email></para> 
+			 <para role="publisher">Проект документирования GNOME</para> 
+		  </revdescription></revision> 
+	 </revhistory> 
+	 <releaseinfo>Это руководство описывает апплет «Рыбка версии» 3.4.7.4ac19.</releaseinfo> 
+	 <legalnotice> 
+		<title>Обратная связь</title> 
+		<para>Чтобы сообщить об ошибке или внести предложение по усовершенствованию апплета «Рыбка» или данного руководства, следуйте инструкциям на <ulink url="help:gnome-feedback" type="help">GNOME Feedback Page</ulink>.</para>
+		
+	 </legalnotice> 
+	 <abstract role="description">
+		<para>Апплет Рыбка показывает движущееся изображение на панели и предсказывает судьбу при нажатии.</para>
+	 </abstract>
+  
+    <othercredit class="translator">
+      <personname>
+        <firstname>Yuri Myasoedov</firstname>
+      </personname>
+      <email>omerta13@yandex.ru</email>
+    </othercredit>
+    <copyright>
+      
+        <year>2008</year>
+      
+      <holder>Yuri Myasoedov</holder>
+    </copyright>
+  
+    <othercredit class="translator">
+      <personname>
+        <firstname>Yuri Kozlov</firstname>
+      </personname>
+      <email>yuray@komyakino.ru</email>
+    </othercredit>
+    <copyright>
+      
+        <year>2012</year>
+      
+      <holder>Yuri Kozlov</holder>
+    </copyright>
+  
+    <othercredit class="translator">
+      <personname>
+        <firstname>Ser82-png</firstname>
+      </personname>
+      <email>asvmail.as@gmail.com</email>
+    </othercredit>
+    <copyright>
+      
+        <year>2022</year>
+      
+      <holder>Ser82-png</holder>
+    </copyright>
+  </articleinfo> 
+  <indexterm><primary>Рыбка</primary></indexterm> 
+
+<!-- ============= Document Body ============================= -->
+<!-- ============= Introduction ============================== -->
+<sect1 id="fish-introduction">
+<title>Введение</title>
+<!-- ==== Figure ============================================= -->
+	 <figure id="fish-fig"> 
+		<title>Апплет «Рыбка»</title> 
+		<screenshot> 
+		  <mediaobject><imageobject><imagedata fileref="figures/fish_applet.png" format="PNG"/> </imageobject> <textobject> <phrase>Показан апплет «Рыбка».</phrase> </textobject></mediaobject> 
+		</screenshot> 
+	 </figure> 
+    <!-- ==== End of Figure ======================================= -->
+<para>Апплет <application>Рыбка</application> показывает движущееся изображение рыбки на панели. Вы можете изменить имя рыбки и программу, которая запускается при щелчке по панели. По умолчанию, запускается программа <application>Fortune</application>, которая, обычно, показывает смешное произвольное сообщение из базы данных цитат.</para>
+
+
+
+
+<para>Изображение на панели и команда, которая выполняется при щелчке левой кнопкой мыши, могут настраиваться пользователем.</para>
+<sect2 id="fish-introduction-add">
+<title>Чтобы добавить апплет «Рыбка» на панель</title>
+  <para>Выполните следующие действия:</para>
+         <orderedlist>
+           <listitem>
+             <para>Щёлкните правой кнопкой мыши на панели.</para>
+           </listitem>
+           <listitem>
+             <para>Выберите <guimenuitem>Добавить на панель</guimenuitem>.</para>
+           </listitem>
+           <listitem>
+             <para>Прокрутите вниз список элементов диалогового окна <guimenuitem>Добавить на панель</guimenuitem>, выберите <guilabel>Рыбка</guilabel>.</para>
+           </listitem>
+           <listitem>
+             <para>Нажмите <guibutton>Добавить</guibutton>.</para>
+           </listitem>
+         </orderedlist>
+    </sect2></sect1>
+
+<sect1 id="fish-usage">
+<title>Использование</title>
+<para>Для появления диалогового окна <guilabel>Рыбка по имени Wanda</guilabel> нажмите левую кнопку мыши на апплете. Диалоговое окно отображает послание судьбы. Можно настроить поведение апплета, определив команду, которая выполняется по щелчку. Для получения более подробной информации смотрите <xref linkend="fish-settings"/>.</para>
+</sect1>
+
+<!-- ============= Preferences  ================================ -->
+<sect1 id="fish-settings">
+<title>Параметры</title>
+<para>Чтобы настроить апплет <application>Рыбка</application>, нажмите правую кнопку мыши на апплете <application>Рыбка</application>, затем выберите <guimenu>Параметры</guimenu>.</para>
+<variablelist>
+<varlistentry>
+<term><guilabel>Имя рыбки</guilabel></term>
+<listitem>
+<para>В этом поле ввода можно задать имя рыбки.</para>
+</listitem>
+</varlistentry>
+<varlistentry>
+<term><guilabel>Команда, выполняемая при нажатии</guilabel></term>
+<listitem>
+<para>По умолчанию, апплет <application>Рыбка</application> выполняет команду <literal>fortune</literal> по щелчку на нём. В этом поле ввода можно задать другую команду.</para>
+</listitem>
+</varlistentry>
+<varlistentry>
+<term><guilabel>Файл</guilabel></term>
+<listitem>
+<para>Это поле используется для выбора изображения для апплета. Можно выбрать изображение, поставляемое с апплетом, или своё собственное.</para>
+</listitem>
+</varlistentry>
+<varlistentry>
+<term><guilabel>Количество кадров в анимации</guilabel></term>
+<listitem>
+<para>С помощью счётчика можно задать количество кадров в анимации.</para>
+</listitem>
+</varlistentry>
+<varlistentry>
+<term><guilabel>Задержка кадра</guilabel></term>
+<listitem>
+<para>С помощью счётчика можно установить задержку в секундах между кадрами в анимации.</para>
+</listitem>
+</varlistentry>
+<varlistentry>
+<term><guilabel>Поворачивать на вертикальных панелях</guilabel></term>
+<listitem>
+<para>Выберите этот параметр, чтобы повернуть изображение апплета, когда апплет добавляется на вертикальную панель.</para>
+</listitem>
+</varlistentry>
+</variablelist>
+</sect1>
+</article>

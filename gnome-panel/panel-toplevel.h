@@ -25,6 +25,7 @@
 
 #include <gtk/gtk.h>
 
+#include "gp-application.h"
 #include "panel-enums-gsettings.h"
 
 G_BEGIN_DECLS
@@ -61,12 +62,13 @@ struct _PanelToplevelClass {
 	gboolean  (*toggle_expand)    (PanelToplevel *toplevel);
 	gboolean  (*expand)           (PanelToplevel *toplevel);
 	gboolean  (*unexpand)         (PanelToplevel *toplevel);
-	gboolean  (*toggle_hidden)    (PanelToplevel *toplevel);
 	gboolean  (*begin_move)       (PanelToplevel *toplevel);
 	gboolean  (*begin_resize)     (PanelToplevel *toplevel);
 };
 
 GType                panel_toplevel_get_type               (void) G_GNUC_CONST;
+
+GpApplication       *panel_toplevel_get_application        (PanelToplevel       *self);
 
 PanelWidget         *panel_toplevel_get_panel_widget       (PanelToplevel       *toplevel);
 
@@ -115,14 +117,12 @@ void                 panel_toplevel_set_animation_speed    (PanelToplevel       
 void                 panel_toplevel_set_enable_buttons     (PanelToplevel       *toplevel,
 							    gboolean             enable_buttons);
 
-gboolean             panel_toplevel_is_last                (PanelToplevel       *toplevel);
 int                  panel_toplevel_get_maximum_size       (PanelToplevel *toplevel);
 
-GSList              *panel_toplevel_list_toplevels         (void);
-PanelToplevel       *panel_toplevel_get_by_id              (const char    *toplevel_id);
-gboolean             panel_toplevel_find_empty_spot        (GdkScreen        *screen,
-							    PanelOrientation *orientation,
-							    int              *monitor);
+gboolean             panel_toplevel_find_empty_spot        (GpApplication       *application,
+                                                            GdkScreen           *screen,
+                                                            PanelOrientation    *orientation,
+                                                            int                 *monitor);
 
 G_END_DECLS
 

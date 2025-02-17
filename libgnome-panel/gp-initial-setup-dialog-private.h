@@ -26,21 +26,26 @@ typedef void  (* GpInitialSetupCallback) (GpInitialSetupDialog *dialog,
                                           gboolean              canceled,
                                           gpointer              user_data);
 
-#define GP_TYPE_INITIAL_SETUP_DIALOG (gp_initital_setup_dialog_get_type ())
-G_DECLARE_FINAL_TYPE (GpInitialSetupDialog, gp_initital_setup_dialog,
+GP_EXPORT
+#define GP_TYPE_INITIAL_SETUP_DIALOG (gp_initial_setup_dialog_get_type ())
+G_DECLARE_FINAL_TYPE (GpInitialSetupDialog, gp_initial_setup_dialog,
                       GP, INITIAL_SETUP_DIALOG, GtkWindow)
 
-GpInitialSetupDialog *gp_initital_setup_dialog_new          (void);
+GP_EXPORT
+GpInitialSetupDialog *gp_initial_setup_dialog_new          (void);
 
-void                  gp_initital_setup_dialog_add_callback (GpInitialSetupDialog   *dialog,
-                                                             GpInitialSetupCallback  callback,
-                                                             gpointer                user_data,
-                                                             GDestroyNotify          free_func);
+GP_EXPORT
+void                  gp_initial_setup_dialog_add_callback (GpInitialSetupDialog   *self,
+                                                            GpInitialSetupCallback  callback,
+                                                            gpointer                user_data,
+                                                            GDestroyNotify          free_func);
 
-GVariant             *gp_initital_setup_dialog_get_settings (GpInitialSetupDialog   *dialog);
+GP_EXPORT
+GVariant             *gp_initial_setup_dialog_get_settings (GpInitialSetupDialog   *self);
 
-void                  gp_initital_setup_dialog_set_settings (GpInitialSetupDialog   *dialog,
-                                                             GVariant               *settings);
+GP_EXPORT
+void                  gp_initial_setup_dialog_set_settings (GpInitialSetupDialog   *self,
+                                                            GVariant               *settings);
 
 G_END_DECLS
 

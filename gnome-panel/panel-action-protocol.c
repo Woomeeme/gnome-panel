@@ -23,83 +23,43 @@
 #include <config.h>
 
 #include "panel-action-protocol.h"
-#include "panel-applets-manager.h"
 
 #include <gdk/gdk.h>
 #include <gdk/gdkx.h>
 #include <X11/Xlib.h>
 
 #include "applet.h"
+#include "gp-module-manager.h"
 #include "panel-toplevel.h"
 #include "panel-util.h"
-#include "panel-run-dialog.h"
+
+struct _GpActionProtocol
+{
+  GObject        parent;
+
+  GpApplication *application;
+};
+
+G_DEFINE_TYPE (GpActionProtocol, gp_action_protocol, G_TYPE_OBJECT)
 
 static Atom atom_gnome_panel_action            = None;
 static Atom atom_gnome_panel_action_main_menu  = None;
 static Atom atom_gnome_panel_action_run_dialog = None;
 
 static void
-menu_destroy_cb (GtkWidget   *widget,
-                 PanelWidget *panel_widget)
+handle_action (GpActionProtocol *self,
+               GpActionFlags     action,
+               guint32           time)
 {
-	panel_toplevel_pop_autohide_disabler (panel_widget->toplevel);
-}
+  GpModuleManager *module_manager;
 
-static void
-menu_loaded_cb (GtkWidget   *widget,
-                PanelWidget *panel_widget)
-{
-	GdkWindow *window;
-	GdkRectangle rect;
-	GdkDisplay *display;
-	GdkSeat *seat;
-	GdkDevice *device;
+  if (action == GP_ACTION_MAIN_MENU &&
+      panel_applet_activate_main_menu (time))
+    return;
 
-	g_signal_connect (widget, "destroy", G_CALLBACK (menu_destroy_cb), panel_widget);
-	panel_toplevel_push_autohide_disabler (panel_widget->toplevel);
+  module_manager = gp_application_get_module_manager (self->application);
 
-	window = gtk_widget_get_window (GTK_WIDGET (panel_widget));
-
-	rect.x = 0;
-	rect.y = 0;
-	rect.width = 1;
-	rect.height = 1;
-
-	display = gdk_display_get_default ();
-	seat = gdk_display_get_default_seat (display);
-	device = gdk_seat_get_pointer (seat);
-
-	gdk_window_get_device_position (window, device,
-	                                &rect.x, &rect.y,
-	                                NULL);
-
-	gtk_menu_popup_at_rect (GTK_MENU (widget), window, &rect,
-	                        GDK_GRAVITY_SOUTH_EAST,
-	                        GDK_GRAVITY_NORTH_WEST,
-	                        NULL);
-}
-
-static void
-panel_action_protocol_main_menu (GdkScreen *screen,
-				 guint32    activate_time)
-{
-	GSList *panels;
-	GtkWidget *menu;
-
-	if (panel_applet_activate_main_menu (activate_time))
-		return;
-
-	panels = panel_widget_get_panels ();
-	menu = panel_applets_manager_get_standalone_menu ();
-
-	g_signal_connect (menu, "loaded", G_CALLBACK (menu_loaded_cb), panels->data);
-}
-
-static void
-panel_action_protocol_run_dialog (GdkScreen *screen,
-				  guint32    activate_time)
-{
-	panel_run_dialog_present (screen, activate_time);
+  gp_module_manager_handle_action (module_manager, action, time);
 }
 
 static GdkFilterReturn
@@ -112,6 +72,7 @@ panel_action_protocol_filter (GdkXEvent *gdk_xevent,
 	GdkDisplay *display;
 	XEvent    *xevent = (XEvent *) gdk_xevent;
 	Atom       atom;
+	GpActionFlags action;
 
 	if (xevent->type != ClientMessage)
 		return GDK_FILTER_CONTINUE;
@@ -129,19 +90,45 @@ panel_action_protocol_filter (GdkXEvent *gdk_xevent,
 		return GDK_FILTER_CONTINUE;
 
 	atom = xevent->xclient.data.l[0];
+	action = GP_ACTION_NONE;
 
 	if (atom == atom_gnome_panel_action_main_menu)
-		panel_action_protocol_main_menu (screen, xevent->xclient.data.l [1]);
+		action = GP_ACTION_MAIN_MENU;
 	else if (atom == atom_gnome_panel_action_run_dialog)
-		panel_action_protocol_run_dialog (screen, xevent->xclient.data.l [1]);
-	else
+		action = GP_ACTION_RUN_DIALOG;
+
+	if (action == GP_ACTION_NONE)
 		return GDK_FILTER_CONTINUE;
+
+	handle_action (GP_ACTION_PROTOCOL (data), action, xevent->xclient.data.l[1]);
 
 	return GDK_FILTER_REMOVE;
 }
 
-void
-panel_action_protocol_init (void)
+static void
+gp_action_protocol_finalize (GObject *object)
+{
+  GpActionProtocol *self;
+
+  self = GP_ACTION_PROTOCOL (object);
+
+  gdk_window_remove_filter (NULL, panel_action_protocol_filter, self);
+
+  G_OBJECT_CLASS (gp_action_protocol_parent_class)->finalize (object);
+}
+
+static void
+gp_action_protocol_class_init (GpActionProtocolClass *self_class)
+{
+  GObjectClass *object_class;
+
+  object_class = G_OBJECT_CLASS (self_class);
+
+  object_class->finalize = gp_action_protocol_finalize;
+}
+
+static void
+gp_action_protocol_init (GpActionProtocol *self)
 {
 	GdkDisplay *display;
 
@@ -161,5 +148,16 @@ panel_action_protocol_init (void)
 			     FALSE);
 
 	/* We'll filter event sent on non-root windows later */
-	gdk_window_add_filter (NULL, panel_action_protocol_filter, NULL);
+	gdk_window_add_filter (NULL, panel_action_protocol_filter, self);
+}
+
+GpActionProtocol *
+gp_action_protocol_new (GpApplication *application)
+{
+  GpActionProtocol *action_protocol;
+
+  action_protocol = g_object_new (GP_TYPE_ACTION_PROTOCOL, NULL);
+  action_protocol->application = application;
+
+  return action_protocol;
 }
